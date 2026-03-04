@@ -1,88 +1,105 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env bash
+set -euo pipefail
 
-LOCK=/var/log/startup_already_done
-if [ -f "$LOCK" ]; then
+LOCK="/var/log/hw4_startup_done"
+if [[ -f "$LOCK" ]]; then
+  echo "Startup already ran once. Skipping."
   exit 0
 fi
+
+
+apt-get update -y
+apt-get install -y python3 python3-venv python3-pip git
+
 
 META="http://metadata.google.internal/computeMetadata/v1/instance/attributes"
 HDR="Metadata-Flavor: Google"
 
-APP=$(curl -s -H "$HDR" "$META/APP" || true)
-REPO_URL=$(curl -s -H "$HDR" "$META/REPO_URL" || true)
+APP="$(curl -sfH "$HDR" "$META/APP")"
+REPO_URL="$(curl -sfH "$HDR" "$META/REPO_URL")"
+PROJECT_ID="$(curl -sfH "$HDR" "$META/PROJECT_ID")"
+BUCKET="$(curl -sfH "$HDR" "$META/BUCKET")"
+PAGES_PREFIX="$(curl -sfH "$HDR" "$META/PAGES_PREFIX" || echo "html-pages")"
+PORT="$(curl -sfH "$HDR" "$META/PORT" || echo "8080")"
+TOPIC="$(curl -sfH "$HDR" "$META/TOPIC" || true)"
+SUBSCRIPTION_ID="$(curl -sfH "$HDR" "$META/SUBSCRIPTION_ID" || true)"
+LOG_PREFIX="$(curl -sfH "$HDR" "$META/LOG_PREFIX" || echo "service2-logs")"
 
-BUCKET=$(curl -s -H "$HDR" "$META/BUCKET" || true)
-PAGES_PREFIX=$(curl -s -H "$HDR" "$META/PAGES_PREFIX" || true)
-TOPIC=$(curl -s -H "$HDR" "$META/TOPIC" || true)
-SUBSCRIPTION=$(curl -s -H "$HDR" "$META/SUBSCRIPTION" || true)
-PORT=$(curl -s -H "$HDR" "$META/PORT" || true)
 
-# defaults (safe)
-: "${BUCKET:=san-hw2-cc}"
-: "${PAGES_PREFIX:=html-pages}"
-: "${TOPIC:=forbidden-requests}"
-: "${SUBSCRIPTION:=forbidden-requests-sub}"
-: "${PORT:=8080}"
+mkdir -p /opt/hw4
+cd /opt/hw4
+rm -rf repo
+git clone "$REPO_URL" repo
+cd repo/hw4
 
-apt-get update
-apt-get install -y python3-pip git
+python3 -m venv /opt/hw4/venv
+/opt/hw4/venv/bin/pip install --upgrade pip
+/opt/hw4/venv/bin/pip install -r requirements.txt
 
-rm -rf /opt/repo
-git clone "$REPO_URL" /opt/repo
 
-pip3 install -r /opt/repo/hw4/requirements.txt
+UNIT="/etc/systemd/system/hw4-${APP}.service"
 
-cat <<EOF > /etc/default/hw4
-BUCKET="$BUCKET"
-PAGES_PREFIX="$PAGES_PREFIX"
-TOPIC="$TOPIC"
-SUBSCRIPTION="$SUBSCRIPTION"
-PORT="$PORT"
-EOF
-
-if [ "$APP" = "service1" ]; then
-  cat <<'EOF' > /etc/systemd/system/service1.service
+if [[ "$APP" == "server" ]]; then
+  cat > "$UNIT" <<EOF
 [Unit]
-Description=HW4 Service 1 Web Server
+Description=HW4 Service1 (Web Server)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/repo/hw4
-EnvironmentFile=/etc/default/hw4
-ExecStart=/usr/bin/gunicorn -w 1 -b 0.0.0.0:${PORT} service1_main:app
+WorkingDirectory=/opt/hw4/repo/hw4
+Environment=PROJECT_ID=${PROJECT_ID}
+Environment=BUCKET=${BUCKET}
+Environment=PAGES_PREFIX=${PAGES_PREFIX}
+Environment=TOPIC=${TOPIC}
+Environment=PORT=${PORT}
+ExecStart=/opt/hw4/venv/bin/python /opt/hw4/repo/hw4/service1_main.py
 Restart=always
+RestartSec=2
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
   systemctl daemon-reload
-  systemctl enable --now service1
-fi
+  systemctl enable "hw4-${APP}.service"
+  systemctl start "hw4-${APP}.service"
+  systemctl status "hw4-${APP}.service" --no-pager || true
 
-if [ "$APP" = "service2" ]; then
-  cat <<'EOF' > /etc/systemd/system/service2.service
+elif [[ "$APP" == "service2" ]]; then
+  cat > "$UNIT" <<EOF
 [Unit]
-Description=HW4 Service 2 Forbidden Reporter
+Description=HW4 Service2 (Forbidden Request Processor)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/repo/hw4
-EnvironmentFile=/etc/default/hw4
-ExecStart=/usr/bin/python3 /opt/repo/hw4/service2_main.py
+WorkingDirectory=/opt/hw4/repo/hw4
+Environment=PROJECT_ID=${PROJECT_ID}
+Environment=SUBSCRIPTION_ID=${SUBSCRIPTION_ID}
+Environment=BUCKET=${BUCKET}
+Environment=LOG_PREFIX=${LOG_PREFIX}
+ExecStart=/opt/hw4/venv/bin/python /opt/hw4/repo/hw4/service2_main.py
 Restart=always
+RestartSec=2
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
   systemctl daemon-reload
-  systemctl enable --now service2
+  systemctl enable "hw4-${APP}.service"
+  systemctl start "hw4-${APP}.service"
+  systemctl status "hw4-${APP}.service" --no-pager || true
+
+elif [[ "$APP" == "client" ]]; then
+  echo "Client VM provisioned. No service started."
+else
+  echo "Unknown APP=$APP"
+  exit 1
 fi
 
 touch "$LOCK"
+echo "Startup complete."
