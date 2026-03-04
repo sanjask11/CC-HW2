@@ -6,7 +6,7 @@ REGION="us-central1"
 ZONE="us-central1-a"
 PORT="8080"
 
-REPO_URL="https://github.com/sanjask11/CC-HW2"
+REPO_URL="https://github.com/sanjask11/CC-HW2.git"
 
 BUCKET="san-hw2-cc"
 PAGES_PREFIX="html-pages"
