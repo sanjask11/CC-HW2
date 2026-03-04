@@ -1,152 +1,110 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PROJECT_ID="$(gcloud config get-value project 2>/dev/null)"
-if [[ -z "${PROJECT_ID}" ]]; then
-  echo "No active gcloud project. Run: gcloud config set project <PROJECT_ID>"
+PROJECT_ID="$(gcloud config get-value project)"
+if [[ -z "${PROJECT_ID}" || "${PROJECT_ID}" == "(unset)" ]]; then
+  echo "gcloud project not set. Run: gcloud config set project YOUR_PROJECT_ID" >&2
   exit 1
 fi
 
-REGION="us-central1"
 ZONE="us-central1-a"
-
-# Names
-TOPIC="forbidden-requests"
-SUB="forbidden-requests-sub"
-
-BUCKET="san-hw2-cc"
-PAGES_PREFIX="html-pages"
-PORT="8080"
-
-ADDR_NAME="hw4-server-ip"
-FW_RULE="hw4-allow-8080"
-
-SA_SVC1_NAME="hw4-svc1"
-SA_SVC2_NAME="hw4-svc2"
-SA_SVC1="${SA_SVC1_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
-SA_SVC2="${SA_SVC2_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
-
-VM_SERVER="hw4-server"
-VM_CLIENT="hw4-client"
-VM_SVC2="hw4-service2"
-
+REGION="us-central1"
 
 REPO_URL="https://github.com/sanjask11/CC-HW2.git"
 
-echo "[setup] PROJECT_ID=${PROJECT_ID}"
+BUCKET_NAME="san-hw2-cc"
+PAGES_PREFIX="html-pages"
+PORT="8080"
 
+TOPIC="forbidden-requests"
+SUBSCRIPTION="forbidden-requests-sub"
 
-gcloud services enable \
-  compute.googleapis.com \
-  iam.googleapis.com \
-  pubsub.googleapis.com \
-  logging.googleapis.com \
-  storage.googleapis.com \
-  iamcredentials.googleapis.com \
-  --project "${PROJECT_ID}"
+SERVER_VM="hw4-server"
+REPORTER_VM="hw4-reporter"
 
+SERVER_SA="hw4-server-sa"
+REPORTER_SA="hw4-reporter-sa"
+SERVER_SA_EMAIL="${SERVER_SA}@${PROJECT_ID}.iam.gserviceaccount.com"
+REPORTER_SA_EMAIL="${REPORTER_SA}@${PROJECT_ID}.iam.gserviceaccount.com"
 
-if ! gcloud pubsub topics describe "${TOPIC}" --project "${PROJECT_ID}" >/dev/null 2>&1; then
-  gcloud pubsub topics create "${TOPIC}" --project "${PROJECT_ID}"
+ADDR_NAME="hw4-server-ip"
+FW_NAME="hw4-allow-${PORT}"
+
+echo "Enabling APIs..."
+gcloud services enable compute.googleapis.com pubsub.googleapis.com logging.googleapis.com storage.googleapis.com >/dev/null
+
+echo "Creating service accounts (if missing)..."
+gcloud iam service-accounts create "${SERVER_SA}" --display-name="HW4 Server SA" >/dev/null 2>&1 || true
+gcloud iam service-accounts create "${REPORTER_SA}" --display-name="HW4 Reporter SA" >/dev/null 2>&1 || true
+
+echo "Ensuring bucket exists..."
+if ! gcloud storage buckets describe "gs://${BUCKET_NAME}" >/dev/null 2>&1; then
+  gcloud storage buckets create "gs://${BUCKET_NAME}" --location=US --uniform-bucket-level-access >/dev/null
+  gcloud storage buckets update "gs://${BUCKET_NAME}" --update-labels=hw=4,owner=setup_sh >/dev/null
 fi
 
-if ! gcloud pubsub subscriptions describe "${SUB}" --project "${PROJECT_ID}" >/dev/null 2>&1; then
-  gcloud pubsub subscriptions create "${SUB}" \
-    --topic "${TOPIC}" \
-    --project "${PROJECT_ID}"
-fi
+echo "Creating Pub/Sub topic + subscription..."
+gcloud pubsub topics create "${TOPIC}" >/dev/null 2>&1 || true
+gcloud pubsub subscriptions create "${SUBSCRIPTION}" --topic="${TOPIC}" >/dev/null 2>&1 || true
 
+echo "Setting minimal IAM..."
+# Server SA: read objects, write logs, publish to topic
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+  --member="serviceAccount:${SERVER_SA_EMAIL}" \
+  --role="roles/logging.logWriter" >/dev/null
 
-if ! gcloud iam service-accounts describe "${SA_SVC1}" --project "${PROJECT_ID}" >/dev/null 2>&1; then
-  gcloud iam service-accounts create "${SA_SVC1_NAME}" --project "${PROJECT_ID}"
-fi
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+  --member="serviceAccount:${SERVER_SA_EMAIL}" \
+  --role="roles/pubsub.publisher" >/dev/null
 
-if ! gcloud iam service-accounts describe "${SA_SVC2}" --project "${PROJECT_ID}" >/dev/null 2>&1; then
-  gcloud iam service-accounts create "${SA_SVC2_NAME}" --project "${PROJECT_ID}"
-fi
-
-
-gcloud storage buckets add-iam-policy-binding "gs://${BUCKET}" \
-  --member="serviceAccount:${SA_SVC1}" \
+gcloud storage buckets add-iam-policy-binding "gs://${BUCKET_NAME}" \
+  --member="serviceAccount:${SERVER_SA_EMAIL}" \
   --role="roles/storage.objectViewer" >/dev/null
 
-gcloud pubsub topics add-iam-policy-binding "${TOPIC}" \
-  --member="serviceAccount:${SA_SVC1}" \
-  --role="roles/pubsub.publisher" \
-  --project "${PROJECT_ID}" >/dev/null
 
 gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
-  --member="serviceAccount:${SA_SVC1}" \
+  --member="serviceAccount:${REPORTER_SA_EMAIL}" \
   --role="roles/logging.logWriter" >/dev/null
-
-
-gcloud pubsub subscriptions add-iam-policy-binding "${SUB}" \
-  --member="serviceAccount:${SA_SVC2}" \
-  --role="roles/pubsub.subscriber" \
-  --project "${PROJECT_ID}" >/dev/null
-
-gcloud storage buckets add-iam-policy-binding "gs://${BUCKET}" \
-  --member="serviceAccount:${SA_SVC2}" \
-  --role="roles/storage.objectAdmin" >/dev/null
 
 gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
-  --member="serviceAccount:${SA_SVC2}" \
-  --role="roles/logging.logWriter" >/dev/null
+  --member="serviceAccount:${REPORTER_SA_EMAIL}" \
+  --role="roles/pubsub.subscriber" >/dev/null
 
+echo "Reserving static IP (regional)..."
+gcloud compute addresses create "${ADDR_NAME}" --region="${REGION}" >/dev/null 2>&1 || true
+STATIC_IP="$(gcloud compute addresses describe "${ADDR_NAME}" --region="${REGION}" --format='value(address)')"
+echo "Static IP: ${STATIC_IP}"
 
-if ! gcloud compute addresses describe "${ADDR_NAME}" --region "${REGION}" --project "${PROJECT_ID}" >/dev/null 2>&1; then
-  gcloud compute addresses create "${ADDR_NAME}" --region "${REGION}" --project "${PROJECT_ID}"
-fi
+echo "Creating firewall rule to allow TCP ${PORT}..."
+gcloud compute firewall-rules create "${FW_NAME}" \
+  --allow="tcp:${PORT}" \
+  --direction=INGRESS \
+  --source-ranges="0.0.0.0/0" \
+  --target-tags="hw4-server" >/dev/null 2>&1 || true
 
-SERVER_IP="$(gcloud compute addresses describe "${ADDR_NAME}" --region "${REGION}" --project "${PROJECT_ID}" --format='value(address)')"
-echo "[setup] SERVER_IP=${SERVER_IP}"
+echo "Creating server VM..."
+gcloud compute instances create "${SERVER_VM}" \
+  --zone="${ZONE}" \
+  --machine-type="e2-micro" \
+  --image-family="debian-12" --image-project="debian-cloud" \
+  --service-account="${SERVER_SA_EMAIL}" \
+  --scopes="https://www.googleapis.com/auth/cloud-platform" \
+  --tags="hw4-server" \
+  --address="${STATIC_IP}" \
+  --metadata="APP=service1,PROJECT_ID=${PROJECT_ID},REPO_URL=${REPO_URL},BUCKET=${BUCKET_NAME},PAGES_PREFIX=${PAGES_PREFIX},PORT=${PORT},TOPIC=${TOPIC},SUBSCRIPTION=${SUBSCRIPTION}" \
+  --metadata-from-file startup-script="startup.sh" \
+  >/dev/null 2>&1 || true
 
+echo "Creating reporter VM..."
+gcloud compute instances create "${REPORTER_VM}" \
+  --zone="${ZONE}" \
+  --machine-type="e2-micro" \
+  --image-family="debian-12" --image-project="debian-cloud" \
+  --service-account="${REPORTER_SA_EMAIL}" \
+  --scopes="https://www.googleapis.com/auth/cloud-platform" \
+  --metadata="APP=service2,PROJECT_ID=${PROJECT_ID},REPO_URL=${REPO_URL},TOPIC=${TOPIC},SUBSCRIPTION=${SUBSCRIPTION}" \
+  --metadata-from-file startup-script="startup.sh" \
+  >/dev/null 2>&1 || true
 
-if ! gcloud compute firewall-rules describe "${FW_RULE}" --project "${PROJECT_ID}" >/dev/null 2>&1; then
-  gcloud compute firewall-rules create "${FW_RULE}" \
-    --allow "tcp:${PORT}" \
-    --direction INGRESS \
-    --target-tags "hw4-server" \
-    --source-ranges "0.0.0.0/0" \
-    --project "${PROJECT_ID}"
-fi
-
-
-if ! gcloud compute instances describe "${VM_SERVER}" --zone "${ZONE}" --project "${PROJECT_ID}" >/dev/null 2>&1; then
-  gcloud compute instances create "${VM_SERVER}" \
-    --zone "${ZONE}" \
-    --machine-type "e2-micro" \
-    --address "${SERVER_IP}" \
-    --tags "hw4-server" \
-    --service-account "${SA_SVC1}" \
-    --scopes "https://www.googleapis.com/auth/devstorage.read_only,https://www.googleapis.com/auth/pubsub,https://www.googleapis.com/auth/logging.write" \
-    --metadata-from-file startup-script=startup.sh \
-    --metadata "APP=server,REPO_URL=${REPO_URL},PROJECT_ID=${PROJECT_ID},BUCKET=${BUCKET},PAGES_PREFIX=${PAGES_PREFIX},PORT=${PORT},TOPIC=${TOPIC}"
-fi
-
-
-if ! gcloud compute instances describe "${VM_CLIENT}" --zone "${ZONE}" --project "${PROJECT_ID}" >/dev/null 2>&1; then
-  gcloud compute instances create "${VM_CLIENT}" \
-    --zone "${ZONE}" \
-    --machine-type "e2-micro" \
-    --no-service-account \
-    --no-scopes \
-    --metadata-from-file startup-script=startup.sh \
-    --metadata "APP=client,REPO_URL=${REPO_URL},PROJECT_ID=${PROJECT_ID},BUCKET=${BUCKET},PAGES_PREFIX=${PAGES_PREFIX},PORT=${PORT}"
-fi
-
-
-if ! gcloud compute instances describe "${VM_SVC2}" --zone "${ZONE}" --project "${PROJECT_ID}" >/dev/null 2>&1; then
-  gcloud compute instances create "${VM_SVC2}" \
-    --zone "${ZONE}" \
-    --machine-type "e2-micro" \
-    --service-account "${SA_SVC2}" \
-    --scopes "https://www.googleapis.com/auth/devstorage.read_write,https://www.googleapis.com/auth/pubsub,https://www.googleapis.com/auth/logging.write" \
-    --metadata-from-file startup-script=startup.sh \
-    --metadata "APP=service2,REPO_URL=${REPO_URL},PROJECT_ID=${PROJECT_ID},BUCKET=${BUCKET},SUBSCRIPTION_ID=${SUB},LOG_PREFIX=service2-logs"
-fi
-
-echo "[setup] done"
-echo "[setup] Server URL examples:"
-echo "  http://${SERVER_IP}:${PORT}/${PAGES_PREFIX}/0.html"
-echo "  http://${SERVER_IP}:${PORT}/${PAGES_PREFIX}/does_not_exist_99999.html"
+echo "DONE"
+echo "Server URL: http://${STATIC_IP}:${PORT}/"
