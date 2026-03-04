@@ -1,44 +1,51 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PROJECT_ID="$(gcloud config get-value project 2>/dev/null)"
-REGION="us-central1"
+PROJECT_ID="$(gcloud config get-value project)"
 ZONE="us-central1-a"
+REGION="us-central1"
+
+BUCKET_NAME="san-hw2-cc"
 
 TOPIC="forbidden-requests"
-SUB="forbidden-requests-sub"
+SUBSCRIPTION="forbidden-requests-sub"
+
+SERVER_VM="hw4-server"
+REPORTER_VM="hw4-reporter"
+
+SERVER_SA="hw4-server-sa"
+REPORTER_SA="hw4-reporter-sa"
 
 ADDR_NAME="hw4-server-ip"
-FW_RULE="hw4-allow-8080"
+FW_NAME="hw4-allow-8080"
 
-SA_SVC1_NAME="hw4-svc1"
-SA_SVC2_NAME="hw4-svc2"
-SA_SVC1="${SA_SVC1_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
-SA_SVC2="${SA_SVC2_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
+echo "Deleting VMs..."
+gcloud compute instances delete "${SERVER_VM}" --zone="${ZONE}" --quiet >/dev/null 2>&1 || true
+gcloud compute instances delete "${REPORTER_VM}" --zone="${ZONE}" --quiet >/dev/null 2>&1 || true
 
-VM_SERVER="hw4-server"
-VM_CLIENT="hw4-client"
-VM_SVC2="hw4-service2"
+echo "Deleting firewall rule..."
+gcloud compute firewall-rules delete "${FW_NAME}" --quiet >/dev/null 2>&1 || true
 
-echo "[cleanup] PROJECT_ID=${PROJECT_ID}"
+echo "Releasing static IP..."
+gcloud compute addresses delete "${ADDR_NAME}" --region="${REGION}" --quiet >/dev/null 2>&1 || true
 
+echo "Deleting Pub/Sub resources..."
+gcloud pubsub subscriptions delete "${SUBSCRIPTION}" --quiet >/dev/null 2>&1 || true
+gcloud pubsub topics delete "${TOPIC}" --quiet >/dev/null 2>&1 || true
 
-gcloud compute instances delete "${VM_SERVER}" --zone "${ZONE}" --project "${PROJECT_ID}" --quiet || true
-gcloud compute instances delete "${VM_CLIENT}" --zone "${ZONE}" --project "${PROJECT_ID}" --quiet || true
-gcloud compute instances delete "${VM_SVC2}" --zone "${ZONE}" --project "${PROJECT_ID}" --quiet || true
+echo "Deleting service accounts..."
+gcloud iam service-accounts delete "${SERVER_SA}@${PROJECT_ID}.iam.gserviceaccount.com" --quiet >/dev/null 2>&1 || true
+gcloud iam service-accounts delete "${REPORTER_SA}@${PROJECT_ID}.iam.gserviceaccount.com" --quiet >/dev/null 2>&1 || true
 
+echo "Deleting bucket ONLY if it was created by setup.sh (labels hw=4, owner=setup_sh)..."
+if gcloud storage buckets describe "gs://${BUCKET_NAME}" >/dev/null 2>&1; then
+  LABELS="$(gcloud storage buckets describe "gs://${BUCKET_NAME}" --format='value(labels)')"
+  if [[ "${LABELS}" == *"hw=4"* && "${LABELS}" == *"owner=setup_sh"* ]]; then
+    gcloud storage rm -r "gs://${BUCKET_NAME}" >/dev/null 2>&1 || true
+  fi
+fi
 
-gcloud compute firewall-rules delete "${FW_RULE}" --project "${PROJECT_ID}" --quiet || true
+echo "Revoking ADC if present..."
+gcloud auth application-default revoke --quiet >/dev/null 2>&1 || true
 
-
-gcloud compute addresses delete "${ADDR_NAME}" --region "${REGION}" --project "${PROJECT_ID}" --quiet || true
-
-
-gcloud pubsub subscriptions delete "${SUB}" --project "${PROJECT_ID}" --quiet || true
-gcloud pubsub topics delete "${TOPIC}" --project "${PROJECT_ID}" --quiet || true
-
-
-gcloud iam service-accounts delete "${SA_SVC1}" --project "${PROJECT_ID}" --quiet || true
-gcloud iam service-accounts delete "${SA_SVC2}" --project "${PROJECT_ID}" --quiet || true
-
-echo "[cleanup] done"
+echo "DONE"
