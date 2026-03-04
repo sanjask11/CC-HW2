@@ -1,153 +1,192 @@
+#!/usr/bin/env python3
 import json
+import logging
+import mimetypes
 import os
-from datetime import datetime, timezone
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import re
+import time
+from http.server import BaseHTTPRequestHandler
+from socketserver import ThreadingMixIn
+from urllib.parse import unquote, urlparse
 
 from google.cloud import logging as cloud_logging
 from google.cloud import pubsub_v1
 from google.cloud import storage
+from http.server import HTTPServer
 
-FORBIDDEN = {
-    "North Korea", "Iran", "Cuba", "Myanmar", "Iraq", "Libya", "Sudan", "Zimbabwe", "Syria"
+
+PROJECT_ID = os.environ.get("PROJECT_ID", "")
+BUCKET = os.environ.get("BUCKET", "")
+PAGES_PREFIX = os.environ.get("PAGES_PREFIX", "html-pages").strip("/")
+PORT = int(os.environ.get("PORT", "8080"))
+TOPIC = os.environ.get("TOPIC", "")
+
+
+BANNED = {
+    "North Korea", "Iran", "Cuba", "Myanmar", "Iraq", "Libya", "Sudan", "Zimbabwe", "Syria",
+    "Korea, Democratic People's Republic of", "Democratic People's Republic of Korea",
+    "Korea (Democratic People's Republic of)", "DPRK",
 }
 
 
-def utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+cloud_logging.Client().setup_logging()
+log = logging.getLogger("hw4.service1")
+log.setLevel(logging.INFO)
 
 
-class Service1Handler(BaseHTTPRequestHandler):
+storage_client = storage.Client()
+publisher = pubsub_v1.PublisherClient() if (PROJECT_ID and TOPIC) else None
+topic_path = publisher.topic_path(PROJECT_ID, TOPIC) if publisher else None
+
+SAFE_PATH_RE = re.compile(r"^[A-Za-z0-9._/\-]+$")
+
+
+def _client_country(headers) -> str:
+    for k in ("X-Country", "X-Client-Country", "X-Geo-Country", "CF-IPCountry"):
+        v = headers.get(k)
+        if v:
+            return v.strip()
+    return "Unknown"
+
+
+def _publish_forbidden(payload: dict) -> None:
+    if not publisher or not topic_path:
+        return
+    data = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    publisher.publish(topic_path, data=data)
+
+
+def _blob_name_for_path(path: str) -> str:
+    
+    if path == "" or path == "/":
+        path = "index.html"
+    
+    path = path.lstrip("/")
+    return f"{PAGES_PREFIX}/{path}" if PAGES_PREFIX else path
+
+
+class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
+    daemon_threads = True
+
+
+class Handler(BaseHTTPRequestHandler):
     server_version = "hw4-service1/1.0"
 
-    
-    bucket_name: str = ""
-    topic_path: str = ""
-    pages_prefix: str = ""
-    publisher: pubsub_v1.PublisherClient = None  
-    storage_client: storage.Client = None  
-    log: cloud_logging.Logger = None  
-
-    def _write(self, code: int, body: str, content_type: str = "text/plain; charset=utf-8") -> None:
-        b = body.encode("utf-8", errors="replace")
+    def _send(self, code: int, body: bytes, content_type: str = "text/plain; charset=utf-8"):
         self.send_response(code)
         self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(len(b)))
+        self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(b)
+        self.wfile.write(body)
 
-    def _structured_log(self, severity: str, payload: dict) -> None:
-        self.log.log_struct(payload, severity=severity)
+    def _warn(self, msg: str, **fields):
+        log.warning(msg, extra={"json_fields": fields})
 
-    def _publish_forbidden(self, payload: dict) -> None:
-        data = json.dumps(payload).encode("utf-8")
-        self.publisher.publish(self.topic_path, data=data)
+    def _critical(self, msg: str, **fields):
+        log.critical(msg, extra={"json_fields": fields})
 
-    def _get_country(self) -> str:
-        return (self.headers.get("X-country") or "").strip()
+    def _info(self, msg: str, **fields):
+        log.info(msg, extra={"json_fields": fields})
 
-    def do_GET(self) -> None:
-        path = self.path.split("?", 1)[0]
-        if not path.startswith("/"):
-            path = "/" + path
-        obj = path.lstrip("/")
+    def do_GET(self):
+        parsed = urlparse(self.path)
+        raw_path = unquote(parsed.path)
 
-        if self.pages_prefix and not obj.startswith(self.pages_prefix.rstrip("/") + "/"):
-            obj = f"{self.pages_prefix.rstrip('/')}/{obj}".lstrip("/")
+        
+        if ".." in raw_path or not SAFE_PATH_RE.match(raw_path.lstrip("/")):
+            self._warn(
+                "Invalid path",
+                path=raw_path,
+                client_ip=self.client_address[0],
+            )
+            self._send(404, b"not found\n")
+            return
 
-        country = self._get_country()
-        remote = self.client_address[0] if self.client_address else ""
-        ts = utc_now_iso()
+        country = _client_country(self.headers)
+        client_ip = self.client_address[0]
 
-        if country in FORBIDDEN:
-            event = {
-                "service": "service1",
-                "event_type": "forbidden_country",
+        
+        if country in BANNED:
+            payload = {
+                "ts": int(time.time()),
                 "country": country,
-                "file": obj.split("/")[-1],
-                "path": path,
-                "remote_addr": remote,
-                "event_ts": ts,
+                "client_ip": client_ip,
+                "path": raw_path,
+                "method": "GET",
             }
-            self._structured_log("CRITICAL", event)
-            self._publish_forbidden(event)
-            self._write(400, "Permission denied\n")
+            self._critical("Forbidden country request", **payload)
+            _publish_forbidden(payload)
+            self._send(400, b"permission denied\n")
             return
 
-        bucket = self.storage_client.bucket(self.bucket_name)
-        blob = bucket.blob(obj)
+        blob_name = _blob_name_for_path(raw_path)
 
-        if not blob.exists():
-            event = {
-                "service": "service1",
-                "event_type": "not_found",
-                "object": obj,
-                "path": path,
-                "remote_addr": remote,
-                "event_ts": ts,
-            }
-            self._structured_log("WARNING", event)
-            self._write(404, "Not Found\n")
-            return
+        try:
+            bucket = storage_client.bucket(BUCKET)
+            blob = bucket.blob(blob_name)
+            if not blob.exists():
+                self._warn(
+                    "File not found",
+                    bucket=BUCKET,
+                    blob=blob_name,
+                    path=raw_path,
+                    method="GET",
+                    country=country,
+                    client_ip=client_ip,
+                )
+                self._send(404, b"not found\n")
+                return
 
-        data = blob.download_as_bytes()
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
+            data = blob.download_as_bytes()
+            ctype, _ = mimetypes.guess_type(blob_name)
+            if not ctype:
+                ctype = "application/octet-stream"
+            self._info(
+                "Served file",
+                bucket=BUCKET,
+                blob=blob_name,
+                bytes=len(data),
+                country=country,
+                client_ip=client_ip,
+            )
+            self._send(200, data, content_type=ctype)
+        except Exception as e:
+            log.exception("Server error")
+            self._send(500, f"server error: {e}\n".encode("utf-8"))
 
-    def _not_implemented(self) -> None:
-        method = self.command
-        path = self.path.split("?", 1)[0]
-        remote = self.client_address[0] if self.client_address else ""
-        ts = utc_now_iso()
-        event = {
-            "service": "service1",
-            "event_type": "not_implemented",
-            "method": method,
-            "path": path,
-            "remote_addr": remote,
-            "event_ts": ts,
-        }
-        self._structured_log("WARNING", event)
-        self._write(501, "Not Implemented\n")
+    
+    def _not_implemented(self):
+        country = _client_country(self.headers)
+        self._warn(
+            "Method not implemented",
+            method=self.command,
+            path=self.path,
+            country=country,
+            client_ip=self.client_address[0],
+        )
+        self._send(501, b"not implemented\n")
 
-    def do_POST(self) -> None: self._not_implemented()
-    def do_PUT(self) -> None: self._not_implemented()
-    def do_DELETE(self) -> None: self._not_implemented()
-    def do_HEAD(self) -> None: self._not_implemented()
-    def do_CONNECT(self) -> None: self._not_implemented()
-    def do_OPTIONS(self) -> None: self._not_implemented()
-    def do_TRACE(self) -> None: self._not_implemented()
-    def do_PATCH(self) -> None: self._not_implemented()
+    def do_POST(self): self._not_implemented()
+    def do_PUT(self): self._not_implemented()
+    def do_DELETE(self): self._not_implemented()
+    def do_HEAD(self): self._not_implemented()
+    def do_CONNECT(self): self._not_implemented()
+    def do_OPTIONS(self): self._not_implemented()
+    def do_TRACE(self): self._not_implemented()
+    def do_PATCH(self): self._not_implemented()
 
-    def log_message(self, fmt: str, *args) -> None:
+    def log_message(self, fmt, *args):
         return
 
 
-def main() -> None:
-    project_id = os.environ["PROJECT_ID"]
-    bucket_name = os.environ["BUCKET"]
-    pages_prefix = os.environ.get("PAGES_PREFIX", "html-pages")
-    topic_id = os.environ["TOPIC"]
-    port = int(os.environ.get("PORT", "8080"))
-
-    storage_client = storage.Client(project=project_id)
-    publisher = pubsub_v1.PublisherClient()
-    topic_path = publisher.topic_path(project_id, topic_id)
-
-    logging_client = cloud_logging.Client(project=project_id)
-    logger = logging_client.logger("hw4-service1")
-
-    Service1Handler.bucket_name = bucket_name
-    Service1Handler.pages_prefix = pages_prefix
-    Service1Handler.publisher = publisher
-    Service1Handler.topic_path = topic_path
-    Service1Handler.storage_client = storage_client
-    Service1Handler.log = logger
-
-    server = ThreadingHTTPServer(("0.0.0.0", port), Service1Handler)
-    print(f"[SERVICE1] listening on 0.0.0.0:{port} bucket={bucket_name} prefix={pages_prefix} topic={topic_id}")
+def main():
+    if not PROJECT_ID or not BUCKET or not TOPIC:
+        log.warning(
+            "Missing config",
+            extra={"json_fields": {"PROJECT_ID": PROJECT_ID, "BUCKET": BUCKET, "TOPIC": TOPIC}},
+        )
+    server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
+    log.info("Listening", extra={"json_fields": {"port": PORT}})
     server.serve_forever()
 
 
