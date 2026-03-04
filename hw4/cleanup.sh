@@ -1,40 +1,44 @@
-#!/bin/bash
+#!/usr/bin/env bash
 set -euo pipefail
 
-PROJECT_ID=$(gcloud config get-value project)
+PROJECT_ID="$(gcloud config get-value project 2>/dev/null)"
 REGION="us-central1"
 ZONE="us-central1-a"
 
-SERVER_NAME="hw4-server"
-REPORTER_NAME="hw4-reporter"
-CLIENT_NAME="hw4-client"
+TOPIC="forbidden-requests"
+SUB="forbidden-requests-sub"
 
 ADDR_NAME="hw4-server-ip"
-FW_NAME="hw4-allow-8080"
+FW_RULE="hw4-allow-8080"
 
-TOPIC="forbidden-requests"
-SUBSCRIPTION="forbidden-requests-sub"
+SA_SVC1_NAME="hw4-svc1"
+SA_SVC2_NAME="hw4-svc2"
+SA_SVC1="${SA_SVC1_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
+SA_SVC2="${SA_SVC2_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
 
-SA_SVC1="hw4-svc1"
-SA_SVC2="hw4-svc2"
+VM_SERVER="hw4-server"
+VM_CLIENT="hw4-client"
+VM_SVC2="hw4-service2"
 
-# VMs
-gcloud compute instances delete "$SERVER_NAME" --zone="$ZONE" --quiet >/dev/null 2>&1 || true
-gcloud compute instances delete "$REPORTER_NAME" --zone="$ZONE" --quiet >/dev/null 2>&1 || true
-gcloud compute instances delete "$CLIENT_NAME" --zone="$ZONE" --quiet >/dev/null 2>&1 || true
+echo "[cleanup] PROJECT_ID=${PROJECT_ID}"
 
-# Firewall
-gcloud compute firewall-rules delete "$FW_NAME" --quiet >/dev/null 2>&1 || true
 
-# Static IP
-gcloud compute addresses delete "$ADDR_NAME" --region="$REGION" --quiet >/dev/null 2>&1 || true
+gcloud compute instances delete "${VM_SERVER}" --zone "${ZONE}" --project "${PROJECT_ID}" --quiet || true
+gcloud compute instances delete "${VM_CLIENT}" --zone "${ZONE}" --project "${PROJECT_ID}" --quiet || true
+gcloud compute instances delete "${VM_SVC2}" --zone "${ZONE}" --project "${PROJECT_ID}" --quiet || true
 
-# Pub/Sub
-gcloud pubsub subscriptions delete "$SUBSCRIPTION" --quiet >/dev/null 2>&1 || true
-gcloud pubsub topics delete "$TOPIC" --quiet >/dev/null 2>&1 || true
 
-# Service accounts
-gcloud iam service-accounts delete "$SA_SVC1@$PROJECT_ID.iam.gserviceaccount.com" --quiet >/dev/null 2>&1 || true
-gcloud iam service-accounts delete "$SA_SVC2@$PROJECT_ID.iam.gserviceaccount.com" --quiet >/dev/null 2>&1 || true
+gcloud compute firewall-rules delete "${FW_RULE}" --project "${PROJECT_ID}" --quiet || true
 
-echo "Cleanup complete."
+
+gcloud compute addresses delete "${ADDR_NAME}" --region "${REGION}" --project "${PROJECT_ID}" --quiet || true
+
+
+gcloud pubsub subscriptions delete "${SUB}" --project "${PROJECT_ID}" --quiet || true
+gcloud pubsub topics delete "${TOPIC}" --project "${PROJECT_ID}" --quiet || true
+
+
+gcloud iam service-accounts delete "${SA_SVC1}" --project "${PROJECT_ID}" --quiet || true
+gcloud iam service-accounts delete "${SA_SVC2}" --project "${PROJECT_ID}" --quiet || true
+
+echo "[cleanup] done"
