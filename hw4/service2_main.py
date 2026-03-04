@@ -1,52 +1,71 @@
 import json
 import os
-import sys
 from datetime import datetime, timezone
 
 from google.cloud import pubsub_v1
+from google.cloud import storage
 
 
-SUBSCRIPTION = os.environ.get("SUBSCRIPTION", "forbidden-requests-sub")
-
-
-def _utc_now_iso() -> str:
+def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _project_id() -> str:
-    return os.environ.get("GOOGLE_CLOUD_PROJECT") or os.environ.get("GCLOUD_PROJECT", "")
+def append_gcs_line(storage_client: storage.Client, bucket_name: str, object_name: str, line: str) -> None:
+    bucket = storage_client.bucket(bucket_name)
+    blob = bucket.blob(object_name)
+
+    if blob.exists():
+        prev = blob.download_as_text(encoding="utf-8")
+        new = prev + line
+    else:
+        new = line
+
+    blob.upload_from_string(new, content_type="application/json; charset=utf-8")
 
 
-def main():
-    pid = _project_id()
-    if not pid:
-        print("ERROR: Missing GOOGLE_CLOUD_PROJECT / GCLOUD_PROJECT", file=sys.stderr, flush=True)
-        sys.exit(2)
+def main() -> None:
+    project_id = os.environ["PROJECT_ID"]
+    subscription_id = os.environ["SUBSCRIPTION_ID"]
+    bucket_name = os.environ["BUCKET"]
+    log_prefix = os.environ.get("LOG_PREFIX", "service2-logs").strip("/")
 
-    subscriber = pubsub_v1.SubscriberClient()
-    sub_path = subscriber.subscription_path(pid, SUBSCRIPTION)
+    sub = pubsub_v1.SubscriberClient()
+    sub_path = sub.subscription_path(project_id, subscription_id)
 
-    print(f"[{_utc_now_iso()}] Service2 listening on {sub_path}", flush=True)
+    storage_client = storage.Client(project=project_id)
 
-    def callback(message: pubsub_v1.subscriber.message.Message):
+    log_object = f"{log_prefix}/forbidden_requests.log"
+
+    print(f"[SERVICE2] listening on {sub_path}")
+
+    def callback(message: pubsub_v1.subscriber.message.Message) -> None:
         try:
             payload = json.loads(message.data.decode("utf-8"))
         except Exception:
             payload = {"raw": message.data.decode("utf-8", errors="replace")}
 
-        country = payload.get("country", "UNKNOWN")
-        path = payload.get("path", "UNKNOWN")
-        method = payload.get("method", "UNKNOWN")
-        ts = payload.get("timestamp", _utc_now_iso())
+        payload.setdefault("service", "service2")
+        payload.setdefault("logged_at", utc_now_iso())
 
-        print(f"[{ts}] FORBIDDEN REQUEST country={country} method={method} path={path}", flush=True)
+        country = payload.get("country", "?")
+        file = payload.get("file", payload.get("object", "?"))
+        path = payload.get("path", "?")
+        remote = payload.get("remote_addr", "?")
+        event_ts = payload.get("event_ts", "?")
+
+        print(
+            f"[SERVICE2] forbidden request blocked: "
+            f"country={country} file={file} path={path} remote={remote} event_ts={event_ts}"
+        )
+
+        append_gcs_line(storage_client, bucket_name, log_object, json.dumps(payload) + "\n")
         message.ack()
 
-    streaming_pull_future = subscriber.subscribe(sub_path, callback=callback)
+    streaming = sub.subscribe(sub_path, callback=callback)
     try:
-        streaming_pull_future.result()
-    except KeyboardInterrupt:
-        streaming_pull_future.cancel()
+        streaming.result()
+    finally:
+        streaming.cancel()
 
 
 if __name__ == "__main__":
