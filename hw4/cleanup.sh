@@ -12,9 +12,11 @@ SUBSCRIPTION="forbidden-requests-sub"
 
 SERVER_VM="hw4-server"
 REPORTER_VM="hw4-reporter"
+CLIENT_VM="hw4-client"
 
 SERVER_SA="hw4-server-sa"
 REPORTER_SA="hw4-reporter-sa"
+CLIENT_SA="hw4-client-sa"
 
 ADDR_NAME="hw4-server-ip"
 FW_NAME="hw4-allow-8080"
@@ -22,6 +24,7 @@ FW_NAME="hw4-allow-8080"
 echo "Deleting VMs..."
 gcloud compute instances delete "${SERVER_VM}" --zone="${ZONE}" --quiet >/dev/null 2>&1 || true
 gcloud compute instances delete "${REPORTER_VM}" --zone="${ZONE}" --quiet >/dev/null 2>&1 || true
+gcloud compute instances delete "${CLIENT_VM}" --zone="${ZONE}" --quiet >/dev/null 2>&1 || true
 
 echo "Deleting firewall rule..."
 gcloud compute firewall-rules delete "${FW_NAME}" --quiet >/dev/null 2>&1 || true
