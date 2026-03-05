@@ -25,8 +25,11 @@ CLIENT_VM="hw4-client"
 
 SERVER_SA="hw4-server-sa"
 REPORTER_SA="hw4-reporter-sa"
+CLIENT_SA="hw4-client-sa"
+CLIENT_SA_EMAIL="${CLIENT_SA}@${PROJECT_ID}.iam.gserviceaccount.com"
 SERVER_SA_EMAIL="${SERVER_SA}@${PROJECT_ID}.iam.gserviceaccount.com"
 REPORTER_SA_EMAIL="${REPORTER_SA}@${PROJECT_ID}.iam.gserviceaccount.com"
+
 
 ADDR_NAME="hw4-server-ip"
 FW_NAME="hw4-allow-${PORT}"
@@ -37,6 +40,7 @@ gcloud services enable compute.googleapis.com pubsub.googleapis.com logging.goog
 echo "Creating service accounts (if missing)..."
 gcloud iam service-accounts create "${SERVER_SA}" --display-name="HW4 Server SA" >/dev/null 2>&1 || true
 gcloud iam service-accounts create "${REPORTER_SA}" --display-name="HW4 Reporter SA" >/dev/null 2>&1 || true
+gcloud iam service-accounts create "${CLIENT_SA}" --display-name="HW4 Client SA" >/dev/null 2>&1 || true
 
 echo "Ensuring bucket exists..."
 if ! gcloud storage buckets describe "gs://${BUCKET_NAME}" >/dev/null 2>&1; then
@@ -107,16 +111,14 @@ gcloud compute instances create "${REPORTER_VM}" \
   --metadata-from-file startup-script="startup.sh" \
   >/dev/null 2>&1 || true
 
-echo "Creating client VM..."
 gcloud compute instances create "${CLIENT_VM}" \
   --zone="${ZONE}" \
   --machine-type="e2-micro" \
   --image-family="debian-12" --image-project="debian-cloud" \
+  --service-account="${CLIENT_SA_EMAIL}" \
+  --scopes="https://www.googleapis.com/auth/cloud-platform" \
   --tags="hw4-client" \
-  --metadata=startup-script='#! /bin/bash
-apt-get update -y
-apt-get install -y python3 git
-' \
+  --metadata="startup-script=apt-get update -y && apt-get install -y python3 git" \
   >/dev/null 2>&1 || true
 
 echo "DONE"
