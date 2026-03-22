@@ -78,6 +78,22 @@ echo "Step 8: Revoking Application Default Credentials (if present)..."
 rm -f ~/.config/gcloud/application_default_credentials.json 2>/dev/null || true
 
 echo ""
+echo "Step 9: Deleting Cloud Function..."
+gcloud functions delete stop-database \
+    --region=us-central1 \
+    --project=$PROJECT_ID \
+    --quiet 2>/dev/null || echo "Cloud Function doesn't exist"
+
+echo ""
+echo "Step 10: Deleting Cloud Scheduler job..."
+gcloud scheduler jobs delete stop-db-hourly \
+    --location=us-central1 \
+    --project=$PROJECT_ID \
+    --quiet 2>/dev/null || echo "Scheduler job doesn't exist"
+```
+
+
+echo ""
 echo "========================================="
 echo "Cleanup Complete!"
 echo "========================================="
