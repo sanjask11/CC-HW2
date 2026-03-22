@@ -1,8 +1,8 @@
 #!/bin/bash
 
-set -e  # Exit on any error
+set -e  
 
-# Configuration
+
 PROJECT_ID="primal-ivy-485619-r6"
 REGION="us-central1"
 ZONE="us-central1-a"
@@ -10,13 +10,13 @@ BUCKET_NAME="san-hw2-cc"
 DB_INSTANCE_NAME="hw5-database"
 DB_NAME="request_logs"
 DB_USER="webserver"
-DB_PASSWORD="SecurePassword123!"  # Change this!
+DB_PASSWORD="CloudHomework11!"  
 
 echo "========================================="
 echo "Starting HW5 Infrastructure Setup"
 echo "========================================="
 
-# Set the project
+
 gcloud config set project $PROJECT_ID
 
 echo ""
@@ -30,7 +30,7 @@ gcloud services enable \
 
 echo ""
 echo "Step 2: Creating the Cloud SQL instance..."
-# Check if instance exists
+
 if gcloud sql instances describe $DB_INSTANCE_NAME --project=$PROJECT_ID 2>/dev/null; then
     echo "Cloud SQL instance already exists. Skipping creation."
 else
@@ -71,7 +71,7 @@ gcloud sql import sql $DB_INSTANCE_NAME \
 
 echo ""
 echo "Step 6: Creating the service accounts..."
-# Service account for web server
+
 SA_SERVER="hw5-webserver-sa"
 SA_SERVER_EMAIL="${SA_SERVER}@${PROJECT_ID}.iam.gserviceaccount.com"
 
@@ -83,7 +83,7 @@ else
         --project=$PROJECT_ID
 fi
 
-# Service account for reporter
+
 SA_REPORTER="hw5-reporter-sa"
 SA_REPORTER_EMAIL="${SA_REPORTER}@${PROJECT_ID}.iam.gserviceaccount.com"
 
@@ -97,7 +97,7 @@ fi
 
 echo ""
 echo "Step 7: Granting the IAM permissions..."
-# Web server permissions
+
 gcloud projects add-iam-policy-binding $PROJECT_ID \
     --member="serviceAccount:$SA_SERVER_EMAIL" \
     --role="roles/cloudsql.client"
@@ -154,12 +154,12 @@ gcloud compute firewall-rules create allow-http-8080 \
 echo ""
 echo "Step 11: Creating the VMs..."
 
-# Get Cloud SQL connection name
+
 DB_CONNECTION_NAME=$(gcloud sql instances describe $DB_INSTANCE_NAME \
     --format="get(connectionName)" \
     --project=$PROJECT_ID)
 
-# Web Server VM
+
 echo "Creating the web server VM..."
 gcloud compute instances create hw5-server \
     --zone=$ZONE \
@@ -171,7 +171,7 @@ gcloud compute instances create hw5-server \
     --metadata=startup-script-url=gs://$BUCKET_NAME/hw5/startup.sh,service-type=server,project-id=$PROJECT_ID,db-connection=$DB_CONNECTION_NAME,db-name=$DB_NAME,db-user=$DB_USER,db-password=$DB_PASSWORD,bucket-name=$BUCKET_NAME \
     --project=$PROJECT_ID 2>/dev/null || echo "Server VM already exists"
 
-# Reporter VM
+
 echo "Creating the reporter VM..."
 gcloud compute instances create hw5-reporter \
     --zone=$ZONE \
@@ -181,7 +181,7 @@ gcloud compute instances create hw5-reporter \
     --metadata=startup-script-url=gs://$BUCKET_NAME/hw5/startup.sh,service-type=reporter,project-id=$PROJECT_ID \
     --project=$PROJECT_ID 2>/dev/null || echo "Reporter VM already exists"
 
-# Client VM
+
 echo "Creating the client VM..."
 gcloud compute instances create hw5-client \
     --zone=$ZONE \
@@ -191,7 +191,7 @@ gcloud compute instances create hw5-client \
 
 echo ""
 echo "Step 12: Creating the database monitoring Cloud Function..."
-# Note: We'll create this separately in the next step
+
 
 echo ""
 echo "========================================="
