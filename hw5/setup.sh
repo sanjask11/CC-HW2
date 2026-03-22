@@ -190,8 +190,27 @@ gcloud compute instances create hw5-client \
     --project=$PROJECT_ID 2>/dev/null || echo "Client VM already exists"
 
 echo ""
-echo "Step 12: Creating the database monitoring Cloud Function..."
+echo "Step 12: Deploying Cloud Function to auto-stop database..."
+cd cloud_function_stop_db
+gcloud functions deploy stop-database \
+    --gen2 \
+    --runtime=python311 \
+    --trigger-http \
+    --allow-unauthenticated \
+    --region=us-central1 \
+    --entry-point=stop_database \
+    --project=$PROJECT_ID || echo "Function deployment skipped/failed"
+cd ..
 
+echo ""
+echo "Step 13: Creating Cloud Scheduler job..."
+gcloud scheduler jobs create http stop-db-hourly \
+    --schedule="0 * * * *" \
+    --uri="https://us-central1-${PROJECT_ID}.cloudfunctions.net/stop-database" \
+    --http-method=GET \
+    --location=us-central1 \
+    --project=$PROJECT_ID || echo "Scheduler job creation skipped/failed"
+    
 
 echo ""
 echo "========================================="
