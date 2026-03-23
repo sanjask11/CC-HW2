@@ -1,38 +1,34 @@
-import functions_framework
-import google.auth
-from googleapiclient import discovery
+import os
+from googleapiclient.discovery import build
+from google.auth import default
 
-PROJECT_ID = "primal-ivy-485619-r6"
-INSTANCE_NAME = "hw5-database"
+PROJECT_ID = os.environ.get("PROJECT_ID")
+INSTANCE_NAME = os.environ.get("INSTANCE_NAME", "hw5-db")
 
+def stop_db_if_running(request):
+    credentials, _ = default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+    service = build("sqladmin", "v1beta4", credentials=credentials, cache_discovery=False)
 
-@functions_framework.http
-def stop_database(request):
-    try:
-        credentials, _ = google.auth.default()
-        service = discovery.build(
-            'sqladmin', 'v1beta4',
-            credentials=credentials,
-            cache_discovery=False,
-        )
+    instance = service.instances().get(
+        project=PROJECT_ID,
+        instance=INSTANCE_NAME
+    ).execute()
 
-        instance = service.instances().get(
-            project=PROJECT_ID,
-            instance=INSTANCE_NAME,
-        ).execute()
+    current_policy = instance["settings"].get("activationPolicy", "ALWAYS")
 
-        state = instance.get('state', '')
+    if current_policy == "NEVER":
+        return {"status": "already_stopped", "instance": INSTANCE_NAME}, 200
 
-        if state == 'RUNNABLE':
-            patch_body = {'settings': {'activationPolicy': 'NEVER'}}
-            service.instances().patch(
-                project=PROJECT_ID,
-                instance=INSTANCE_NAME,
-                body=patch_body,
-            ).execute()
-            return {"status": "stopped", "message": f"Database {INSTANCE_NAME} is being stopped"}, 200
-        else:
-            return {"status": "already_stopped", "message": f"Database {INSTANCE_NAME} is not running", "state": state}, 200
+    body = {
+        "settings": {
+            "activationPolicy": "NEVER"
+        }
+    }
 
-    except Exception as e:
-        return {"status": "error", "message": str(e)}, 500
+    service.instances().patch(
+        project=PROJECT_ID,
+        instance=INSTANCE_NAME,
+        body=body
+    ).execute()
+
+    return {"status": "stopped", "instance": INSTANCE_NAME}, 200
