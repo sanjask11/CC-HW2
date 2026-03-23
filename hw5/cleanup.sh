@@ -1,97 +1,34 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
-set -e
-
-
-PROJECT_ID="primal-ivy-485619-r6"
-REGION="us-central1"
+PROJECT_ID="$(gcloud config get-value project)"
 ZONE="us-central1-a"
-DB_INSTANCE_NAME="hw5-database"
+REGION="us-central1"
 
-echo "========================================="
-echo "Starting HW5 Cleanup - Deleting All Resources"
-echo "========================================="
+TOPIC="forbidden-requests"
+SUBSCRIPTION="forbidden-requests-sub"
 
-gcloud config set project $PROJECT_ID
+SERVER_VM="hw5-server"
+REPORTER_VM="hw5-reporter"
+CLIENT_VM_1="hw5-client-1"
+CLIENT_VM_2="hw5-client-2"
 
-echo ""
-echo "Step 1: Deleting VM instances..."
-gcloud compute instances delete hw5-server \
-    --zone=$ZONE \
-    --project=$PROJECT_ID \
-    --quiet 2>/dev/null || echo "hw5-server doesn't exist"
+SERVER_SA="hw5-server-sa"
+REPORTER_SA="hw5-reporter-sa"
+CLIENT_SA="hw5-client-sa"
 
-gcloud compute instances delete hw5-reporter \
-    --zone=$ZONE \
-    --project=$PROJECT_ID \
-    --quiet 2>/dev/null || echo "hw5-reporter doesn't exist"
+ADDR_NAME="hw5-server-ip"
+FW_NAME="hw5-allow-8080"
 
-gcloud compute instances delete hw5-client \
-    --zone=$ZONE \
-    --project=$PROJECT_ID \
-    --quiet 2>/dev/null || echo "hw5-client doesn't exist"
+DB_INSTANCE="hw5-db"
 
-echo ""
-echo "Step 2: Deleting Cloud SQL database..."
-gcloud sql instances delete $DB_INSTANCE_NAME \
-    --project=$PROJECT_ID \
-    --quiet 2>/dev/null || echo "Database doesn't exist"
+echo "Stopping VMs..."
+gcloud compute instances stop "${SERVER_VM}" --zone="${ZONE}" --quiet >/dev/null 2>&1 || true
+gcloud compute instances stop "${REPORTER_VM}" --zone="${ZONE}" --quiet >/dev/null 2>&1 || true
+gcloud compute instances stop "${CLIENT_VM_1}" --zone="${ZONE}" --quiet >/dev/null 2>&1 || true
+gcloud compute instances stop "${CLIENT_VM_2}" --zone="${ZONE}" --quiet >/dev/null 2>&1 || true
 
-echo ""
-echo "Step 3: Releasing static IP address..."
-gcloud compute addresses delete hw5-server-ip \
-    --region=$REGION \
-    --project=$PROJECT_ID \
-    --quiet 2>/dev/null || echo "Static IP doesn't exist"
+echo "Stopping database..."
+gcloud sql instances patch "${DB_INSTANCE}" --activation-policy=NEVER --quiet >/dev/null 2>&1 || true
 
-echo ""
-echo "Step 4: Deleting firewall rule..."
-gcloud compute firewall-rules delete allow-http-8080 \
-    --project=$PROJECT_ID \
-    --quiet 2>/dev/null || echo "Firewall rule doesn't exist"
-
-echo ""
-echo "Step 5: Deleting Pub/Sub subscription..."
-gcloud pubsub subscriptions delete forbidden-requests-sub \
-    --project=$PROJECT_ID \
-    --quiet 2>/dev/null || echo "Subscription doesn't exist"
-
-echo ""
-echo "Step 6: Deleting Pub/Sub topic..."
-gcloud pubsub topics delete forbidden-requests \
-    --project=$PROJECT_ID \
-    --quiet 2>/dev/null || echo "Topic doesn't exist"
-
-echo ""
-echo "Step 7: Deleting service accounts..."
-gcloud iam service-accounts delete hw5-webserver-sa@${PROJECT_ID}.iam.gserviceaccount.com \
-    --project=$PROJECT_ID \
-    --quiet 2>/dev/null || echo "Web server service account doesn't exist"
-
-gcloud iam service-accounts delete hw5-reporter-sa@${PROJECT_ID}.iam.gserviceaccount.com \
-    --project=$PROJECT_ID \
-    --quiet 2>/dev/null || echo "Reporter service account doesn't exist"
-
-echo ""
-echo "Step 8: Revoking Application Default Credentials (if present)..."
-# This ensures no ADC is left over that could interfere
-rm -f ~/.config/gcloud/application_default_credentials.json 2>/dev/null || true
-
-echo ""
-echo "Step 9: Deleting Cloud Function..."
-gcloud functions delete stop-database \
-    --region=us-central1 \
-    --project=$PROJECT_ID \
-    --quiet 2>/dev/null || echo "Cloud Function doesn't exist"
-
-echo ""
-echo "Step 10: Deleting Cloud Scheduler job..."
-gcloud scheduler jobs delete stop-db-hourly \
-    --location=us-central1 \
-    --project=$PROJECT_ID \
-    --quiet 2>/dev/null || echo "Scheduler job doesn't exist"
-
-echo ""
-echo "========================================="
-echo "Cleanup Complete!"
-echo "========================================="
+echo "Done."
