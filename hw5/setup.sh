@@ -98,6 +98,9 @@ else
         --project=$PROJECT_ID
 fi
 
+echo "Waiting for service accounts to propagate..."
+sleep 10
+
 echo ""
 echo "Step 7: Granting the IAM permissions..."
 
