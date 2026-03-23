@@ -1,2 +1,2 @@
 functions-framework==3.*
-google-cloud-sql==2.*
+google-cloud-resource-manager==1.*
