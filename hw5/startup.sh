@@ -21,7 +21,7 @@ apt-get install -y python3-pip git
 
 echo "Installing Python dependencies..."
 pip3 install --upgrade pip
-pip3 install --break-system-packages google-cloud-storage google-cloud-pubsub google-cloud-logging pymysql cryptography
+pip3 install --break-system-packages google-cloud-storage google-cloud-pubsub google-cloud-logging pymysql cryptography SQLAlchemy
 
 
 echo "Cloning GitHub repository..."
@@ -41,28 +41,29 @@ if [ "$SERVICE_TYPE" == "server" ]; then
     DB_PASSWORD=$(curl -s "http://metadata.google.internal/computeMetadata/v1/instance/attributes/db-password" -H "Metadata-Flavor: Google")
     BUCKET_NAME=$(curl -s "http://metadata.google.internal/computeMetadata/v1/instance/attributes/bucket-name" -H "Metadata-Flavor: Google")
     
-    # Download and install cloud_sql_proxy
-    echo "Installing Cloud SQL Proxy..."
-    wget https://dl.google.com/cloudsql/cloud_sql_proxy.linux.amd64 -O /usr/local/bin/cloud_sql_proxy
+    # Download and install Cloud SQL Auth Proxy v2
+    echo "Installing Cloud SQL Auth Proxy v2..."
+    wget "https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.14.1/cloud-sql-proxy.linux.amd64" \
+        -O /usr/local/bin/cloud_sql_proxy
     chmod +x /usr/local/bin/cloud_sql_proxy
-    
-    # Create Cloud SQL Proxy service
+
+    # Create Cloud SQL Proxy service (v2 syntax)
     cat > /etc/systemd/system/cloud-sql-proxy.service << EOF
 [Unit]
-Description=Cloud SQL Proxy
+Description=Cloud SQL Auth Proxy v2
 After=network.target
 
 [Service]
 Type=simple
 User=root
-ExecStart=/usr/local/bin/cloud_sql_proxy -instances=$DB_CONNECTION=tcp:3306
+ExecStart=/usr/local/bin/cloud_sql_proxy $DB_CONNECTION --port=3306 --address=127.0.0.1
 Restart=always
+RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
 EOF
-    
-    # Start Cloud SQL Proxy
+
     systemctl daemon-reload
     systemctl enable cloud-sql-proxy
     systemctl start cloud-sql-proxy
