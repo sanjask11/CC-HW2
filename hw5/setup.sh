@@ -169,7 +169,7 @@ DB_CONNECTION_NAME=$(gcloud sql instances describe $DB_INSTANCE_NAME \
 echo "Creating the web server VM..."
 gcloud compute instances create hw5-server \
     --zone=$ZONE \
-    --machine-type=e2-medium \
+    --machine-type=e2-micro \
     --tags=http-server \
     --service-account=$SA_SERVER_EMAIL \
     --scopes=cloud-platform \
@@ -181,7 +181,7 @@ gcloud compute instances create hw5-server \
 echo "Creating the reporter VM..."
 gcloud compute instances create hw5-reporter \
     --zone=$ZONE \
-    --machine-type=e2-small \
+    --machine-type=e2-micro \
     --service-account=$SA_REPORTER_EMAIL \
     --scopes=cloud-platform \
     --metadata=startup-script-url=gs://$BUCKET_NAME/hw5/startup.sh,service-type=reporter,project-id=$PROJECT_ID \
@@ -191,7 +191,7 @@ gcloud compute instances create hw5-reporter \
 echo "Creating the client VM..."
 gcloud compute instances create hw5-client \
     --zone=$ZONE \
-    --machine-type=e2-small \
+    --machine-type=e2-micro \
     --metadata=startup-script-url=gs://$BUCKET_NAME/hw5/startup.sh,service-type=client,server-ip=$SERVER_IP \
     --project=$PROJECT_ID 2>/dev/null || echo "Client VM already exists"
 
