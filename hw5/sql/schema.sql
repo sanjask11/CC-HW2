@@ -1,26 +1,24 @@
--- Create database for successful requests
-CREATE TABLE IF NOT EXISTS successful_requests (
-    id INT AUTO_INCREMENT PRIMARY KEY,
+CREATE DATABASE IF NOT EXISTS requestsdb;
+USE requestsdb;
+
+CREATE TABLE IF NOT EXISTS requests (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    request_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     country VARCHAR(100),
     client_ip VARCHAR(45),
-    gender VARCHAR(10),
+    gender VARCHAR(20),
     age INT,
-    income VARCHAR(50),
+    income DOUBLE,
     is_banned BOOLEAN,
-    time_of_day DATETIME,
+    time_of_day VARCHAR(50),
     requested_file VARCHAR(255),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    INDEX idx_country (country),
-    INDEX idx_time (time_of_day)
+    http_method VARCHAR(16),
+    response_code INT
 );
 
--- Create database for failed requests
 CREATE TABLE IF NOT EXISTS failed_requests (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    time_of_request DATETIME,
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    request_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     requested_file VARCHAR(255),
-    error_code INT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    INDEX idx_error (error_code),
-    INDEX idx_time (time_of_request)
+    error_code INT
 );
