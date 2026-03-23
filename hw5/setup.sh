@@ -1,240 +1,165 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
-set -e  
+PROJECT_ID="$(gcloud config get-value project)"
+if [[ -z "${PROJECT_ID}" || "${PROJECT_ID}" == "(unset)" ]]; then
+  echo "gcloud project not set. Run: gcloud config set project YOUR_PROJECT_ID" >&2
+  exit 1
+fi
 
-
-PROJECT_ID="primal-ivy-485619-r6"
-REGION="us-central1"
 ZONE="us-central1-a"
+REGION="us-central1"
+
+REPO_URL="https://github.com/sanjask11/CC-HW2.git"
+
 BUCKET_NAME="san-hw2-cc"
-DB_INSTANCE_NAME="hw5-database"
-DB_NAME="request_logs"
-DB_USER="webserver"
-DB_PASSWORD="CloudHomework11!"  
+PAGES_PREFIX="html-pages"
+PORT="8080"
 
-echo "========================================="
-echo "Starting HW5 Infrastructure Setup"
-echo "========================================="
+TOPIC="forbidden-requests"
+SUBSCRIPTION="forbidden-requests-sub"
 
+SERVER_VM="hw5-server"
+REPORTER_VM="hw5-reporter"
+CLIENT_VM_1="hw5-client-1"
+CLIENT_VM_2="hw5-client-2"
 
-gcloud config set project $PROJECT_ID
+SERVER_SA="hw5-server-sa"
+REPORTER_SA="hw5-reporter-sa"
+CLIENT_SA="hw5-client-sa"
 
-echo ""
-echo "Step 1: Enabling the required APIs now..."
+SERVER_SA_EMAIL="${SERVER_SA}@${PROJECT_ID}.iam.gserviceaccount.com"
+REPORTER_SA_EMAIL="${REPORTER_SA}@${PROJECT_ID}.iam.gserviceaccount.com"
+CLIENT_SA_EMAIL="${CLIENT_SA}@${PROJECT_ID}.iam.gserviceaccount.com"
+
+ADDR_NAME="hw5-server-ip"
+FW_NAME="hw5-allow-${PORT}"
+
+DB_INSTANCE="hw5-db"
+DB_NAME="requestsdb"
+DB_USER="hw5user"
+DB_PASSWORD="HW5StrongPass123!"
+DB_VERSION="MYSQL_8_0"
+DB_TIER="db-f1-micro"
+
+echo "Enabling APIs..."
 gcloud services enable \
-    compute.googleapis.com \
-    sqladmin.googleapis.com \
-    storage-api.googleapis.com \
-    pubsub.googleapis.com \
-    cloudfunctions.googleapis.com
+  compute.googleapis.com \
+  pubsub.googleapis.com \
+  logging.googleapis.com \
+  storage.googleapis.com \
+  sqladmin.googleapis.com \
+  cloudfunctions.googleapis.com \
+  cloudscheduler.googleapis.com \
+  cloudbuild.googleapis.com \
+  run.googleapis.com \
+  eventarc.googleapis.com >/dev/null
 
-echo ""
-echo "Step 2: Creating the Cloud SQL instance..."
+echo "Creating service accounts..."
+gcloud iam service-accounts create "${SERVER_SA}" --display-name="HW5 Server SA" >/dev/null 2>&1 || true
+gcloud iam service-accounts create "${REPORTER_SA}" --display-name="HW5 Reporter SA" >/dev/null 2>&1 || true
+gcloud iam service-accounts create "${CLIENT_SA}" --display-name="HW5 Client SA" >/dev/null 2>&1 || true
 
-if gcloud sql instances describe $DB_INSTANCE_NAME --project=$PROJECT_ID 2>/dev/null; then
-    echo "Cloud SQL instance already exists. Skipping creation."
-else
-    gcloud sql instances create $DB_INSTANCE_NAME \
-        --database-version=MYSQL_8_0 \
-        --tier=db-f1-micro \
-        --region=$REGION \
-        --root-password=$DB_PASSWORD \
-        --backup-start-time=03:00 \
-        --enable-bin-log \
-        --project=$PROJECT_ID
-    
-    echo "Waiting for the instance to be ready..."
-    sleep 30
-fi
+echo "Creating Pub/Sub topic + subscription..."
+gcloud pubsub topics create "${TOPIC}" >/dev/null 2>&1 || true
+gcloud pubsub subscriptions create "${SUBSCRIPTION}" --topic="${TOPIC}" >/dev/null 2>&1 || true
 
-echo ""
-echo "Step 3: Creating the database..."
-gcloud sql databases create $DB_NAME \
-    --instance=$DB_INSTANCE_NAME \
-    --project=$PROJECT_ID 2>/dev/null || echo "Database already exists"
+echo "Creating Cloud SQL instance if missing..."
+gcloud sql instances create "${DB_INSTANCE}" \
+  --database-version="${DB_VERSION}" \
+  --tier="${DB_TIER}" \
+  --region="${REGION}" \
+  --root-password="${DB_PASSWORD}" >/dev/null 2>&1 || true
 
-echo ""
-echo "Step 4: Creating the database user..."
-gcloud sql users create $DB_USER \
-    --instance=$DB_INSTANCE_NAME \
-    --password=$DB_PASSWORD \
-    --project=$PROJECT_ID 2>/dev/null || echo "User already exists"
+echo "Ensuring DB is running..."
+gcloud sql instances patch "${DB_INSTANCE}" --activation-policy=ALWAYS --quiet >/dev/null
 
-echo ""
-echo "Step 5: Creating the database schema..."
+echo "Creating database + DB user..."
+gcloud sql databases create "${DB_NAME}" --instance="${DB_INSTANCE}" >/dev/null 2>&1 || true
+gcloud sql users create "${DB_USER}" --instance="${DB_INSTANCE}" --password="${DB_PASSWORD}" >/dev/null 2>&1 || true
 
-gsutil cp sql/schema.sql gs://$BUCKET_NAME/sql/schema.sql
-echo "Importing schema into database (please wait)..."
-gcloud sql import sql $DB_INSTANCE_NAME \
-    gs://$BUCKET_NAME/sql/schema.sql \
-    --database=$DB_NAME \
-    --project=$PROJECT_ID
+DB_CONNECTION_NAME="$(gcloud sql instances describe "${DB_INSTANCE}" --format='value(connectionName)')"
 
-echo "Schema import completed!"
+echo "Assigning IAM..."
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+  --member="serviceAccount:${SERVER_SA_EMAIL}" \
+  --role="roles/logging.logWriter" >/dev/null
 
-echo ""
-echo "Step 6: Creating the service accounts..."
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+  --member="serviceAccount:${SERVER_SA_EMAIL}" \
+  --role="roles/pubsub.publisher" >/dev/null
 
-SA_SERVER="hw5-webserver-sa"
-SA_SERVER_EMAIL="${SA_SERVER}@${PROJECT_ID}.iam.gserviceaccount.com"
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+  --member="serviceAccount:${SERVER_SA_EMAIL}" \
+  --role="roles/cloudsql.client" >/dev/null
 
-if gcloud iam service-accounts describe $SA_SERVER_EMAIL --project=$PROJECT_ID 2>/dev/null; then
-    echo "Web server service account already exists"
-else
-    gcloud iam service-accounts create $SA_SERVER \
-        --display-name="HW5 Web Server Service Account" \
-        --project=$PROJECT_ID
-fi
+gcloud storage buckets add-iam-policy-binding "gs://${BUCKET_NAME}" \
+  --member="serviceAccount:${SERVER_SA_EMAIL}" \
+  --role="roles/storage.objectViewer" >/dev/null
 
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+  --member="serviceAccount:${REPORTER_SA_EMAIL}" \
+  --role="roles/logging.logWriter" >/dev/null
 
-SA_REPORTER="hw5-reporter-sa"
-SA_REPORTER_EMAIL="${SA_REPORTER}@${PROJECT_ID}.iam.gserviceaccount.com"
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+  --member="serviceAccount:${REPORTER_SA_EMAIL}" \
+  --role="roles/pubsub.subscriber" >/dev/null
 
-if gcloud iam service-accounts describe $SA_REPORTER_EMAIL --project=$PROJECT_ID 2>/dev/null; then
-    echo "Reporter service account already exists"
-else
-    gcloud iam service-accounts create $SA_REPORTER \
-        --display-name="HW5 Reporter Service Account" \
-        --project=$PROJECT_ID
-fi
+echo "Reserving static IP..."
+gcloud compute addresses create "${ADDR_NAME}" --region="${REGION}" >/dev/null 2>&1 || true
+STATIC_IP="$(gcloud compute addresses describe "${ADDR_NAME}" --region="${REGION}" --format='value(address)')"
 
-echo "Waiting for service accounts to propagate..."
-sleep 10
+echo "Creating firewall rule..."
+gcloud compute firewall-rules create "${FW_NAME}" \
+  --allow="tcp:${PORT}" \
+  --direction=INGRESS \
+  --source-ranges="0.0.0.0/0" \
+  --target-tags="hw5-server" >/dev/null 2>&1 || true
 
-echo ""
-echo "Step 7: Granting the IAM permissions..."
+echo "Creating server VM..."
+gcloud compute instances create "${SERVER_VM}" \
+  --zone="${ZONE}" \
+  --machine-type="e2-small" \
+  --image-family="debian-12" --image-project="debian-cloud" \
+  --service-account="${SERVER_SA_EMAIL}" \
+  --scopes="https://www.googleapis.com/auth/cloud-platform" \
+  --tags="hw5-server" \
+  --address="${STATIC_IP}" \
+  --metadata="APP=service1,PROJECT_ID=${PROJECT_ID},REPO_URL=${REPO_URL},BUCKET=${BUCKET_NAME},PAGES_PREFIX=${PAGES_PREFIX},PORT=${PORT},TOPIC=${TOPIC},SUBSCRIPTION=${SUBSCRIPTION},DB_HOST=127.0.0.1,DB_PORT=3306,DB_USER=${DB_USER},DB_PASSWORD=${DB_PASSWORD},DB_NAME=${DB_NAME},DB_CONNECTION_NAME=${DB_CONNECTION_NAME}" \
+  --metadata-from-file startup-script="startup.sh" \
+  >/dev/null 2>&1 || true
 
-gcloud projects add-iam-policy-binding $PROJECT_ID \
-    --member="serviceAccount:$SA_SERVER_EMAIL" \
-    --role="roles/cloudsql.client"
+echo "Creating reporter VM..."
+gcloud compute instances create "${REPORTER_VM}" \
+  --zone="${ZONE}" \
+  --machine-type="e2-micro" \
+  --image-family="debian-12" --image-project="debian-cloud" \
+  --service-account="${REPORTER_SA_EMAIL}" \
+  --scopes="https://www.googleapis.com/auth/cloud-platform" \
+  --metadata="APP=service2,PROJECT_ID=${PROJECT_ID},REPO_URL=${REPO_URL},TOPIC=${TOPIC},SUBSCRIPTION=${SUBSCRIPTION}" \
+  --metadata-from-file startup-script="startup.sh" \
+  >/dev/null 2>&1 || true
 
-gcloud projects add-iam-policy-binding $PROJECT_ID \
-    --member="serviceAccount:$SA_SERVER_EMAIL" \
-    --role="roles/storage.objectViewer"
+echo "Creating client VM 1..."
+gcloud compute instances create "${CLIENT_VM_1}" \
+  --zone="${ZONE}" \
+  --machine-type="e2-micro" \
+  --image-family="debian-12" --image-project="debian-cloud" \
+  --service-account="${CLIENT_SA_EMAIL}" \
+  --scopes="https://www.googleapis.com/auth/cloud-platform" \
+  --metadata="startup-script=apt-get update -y && apt-get install -y python3 git curl" \
+  >/dev/null 2>&1 || true
 
-gcloud projects add-iam-policy-binding $PROJECT_ID \
-    --member="serviceAccount:$SA_SERVER_EMAIL" \
-    --role="roles/pubsub.publisher"
+echo "Creating client VM 2..."
+gcloud compute instances create "${CLIENT_VM_2}" \
+  --zone="${ZONE}" \
+  --machine-type="e2-micro" \
+  --image-family="debian-12" --image-project="debian-cloud" \
+  --service-account="${CLIENT_SA_EMAIL}" \
+  --scopes="https://www.googleapis.com/auth/cloud-platform" \
+  --metadata="startup-script=apt-get update -y && apt-get install -y python3 git curl" \
+  >/dev/null 2>&1 || true
 
-gcloud projects add-iam-policy-binding $PROJECT_ID \
-    --member="serviceAccount:$SA_SERVER_EMAIL" \
-    --role="roles/logging.logWriter"
-
-# Reporter permissions
-gcloud projects add-iam-policy-binding $PROJECT_ID \
-    --member="serviceAccount:$SA_REPORTER_EMAIL" \
-    --role="roles/pubsub.subscriber"
-
-gcloud projects add-iam-policy-binding $PROJECT_ID \
-    --member="serviceAccount:$SA_REPORTER_EMAIL" \
-    --role="roles/logging.logWriter"
-
-echo ""
-echo "Step 8: Creating the Pub/Sub topic and subscription..."
-gcloud pubsub topics create forbidden-requests --project=$PROJECT_ID 2>/dev/null || echo "Topic already exists"
-gcloud pubsub subscriptions create forbidden-requests-sub \
-    --topic=forbidden-requests \
-    --project=$PROJECT_ID 2>/dev/null || echo "Subscription already exists"
-
-echo ""
-echo "Step 9: Reserving the static IP for this..."
-gcloud compute addresses create hw5-server-ip \
-    --region=$REGION \
-    --project=$PROJECT_ID 2>/dev/null || echo "IP already reserved"
-
-SERVER_IP=$(gcloud compute addresses describe hw5-server-ip \
-    --region=$REGION \
-    --format="get(address)" \
-    --project=$PROJECT_ID)
-
-echo "Server IP: $SERVER_IP"
-
-echo ""
-echo "Step 10: Creating the firewall rule..."
-gcloud compute firewall-rules create allow-http-8080 \
-    --allow=tcp:8080 \
-    --source-ranges=0.0.0.0/0 \
-    --target-tags=http-server \
-    --project=$PROJECT_ID 2>/dev/null || echo "Firewall rule already exists"
-
-echo ""
-echo "Step 11: Creating the VMs..."
-
-DB_CONNECTION_NAME=$(gcloud sql instances describe $DB_INSTANCE_NAME \
-    --format="get(connectionName)" \
-    --project=$PROJECT_ID)
-
-echo "Creating the web server VM..."
-if gcloud compute instances describe hw5-server --zone=$ZONE --project=$PROJECT_ID 2>/dev/null; then
-    echo "Server VM already exists"
-else
-    gcloud compute instances create hw5-server \
-        --zone=$ZONE \
-        --machine-type=e2-small \
-        --tags=http-server \
-        --service-account=$SA_SERVER_EMAIL \
-        --scopes=cloud-platform \
-        --address=$SERVER_IP \
-        --metadata=startup-script-url=gs://$BUCKET_NAME/hw5/startup.sh,service-type=server,project-id=$PROJECT_ID,db-connection=$DB_CONNECTION_NAME,db-name=$DB_NAME,db-user=$DB_USER,db-password=$DB_PASSWORD,bucket-name=$BUCKET_NAME \
-        --project=$PROJECT_ID
-fi
-
-echo "Creating the reporter VM..."
-if gcloud compute instances describe hw5-reporter --zone=$ZONE --project=$PROJECT_ID 2>/dev/null; then
-    echo "Reporter VM already exists"
-else
-    gcloud compute instances create hw5-reporter \
-        --zone=$ZONE \
-        --machine-type=e2-micro \
-        --service-account=$SA_REPORTER_EMAIL \
-        --scopes=cloud-platform \
-        --metadata=startup-script-url=gs://$BUCKET_NAME/hw5/startup.sh,service-type=reporter,project-id=$PROJECT_ID \
-        --project=$PROJECT_ID
-fi
-
-echo "Creating the client VM..."
-if gcloud compute instances describe hw5-client --zone=$ZONE --project=$PROJECT_ID 2>/dev/null; then
-    echo "Client VM already exists"
-else
-    gcloud compute instances create hw5-client \
-        --zone=$ZONE \
-        --machine-type=e2-micro \
-        --metadata=startup-script-url=gs://$BUCKET_NAME/hw5/startup.sh,service-type=client,server-ip=$SERVER_IP \
-        --project=$PROJECT_ID
-fi
-
-echo ""
-echo "Step 12: Deploying Cloud Function to auto-stop database..."
-cd cloud_function_stop_db
-gcloud functions deploy stop-database \
-    --gen2 \
-    --runtime=python311 \
-    --trigger-http \
-    --allow-unauthenticated \
-    --region=us-central1 \
-    --entry-point=stop_database \
-    --project=$PROJECT_ID || echo "Function deployment skipped/failed"
-cd ..
-
-echo ""
-echo "Step 13: Creating Cloud Scheduler job..."
-gcloud scheduler jobs create http stop-db-hourly \
-    --schedule="0 * * * *" \
-    --uri="https://us-central1-${PROJECT_ID}.cloudfunctions.net/stop-database" \
-    --http-method=GET \
-    --location=us-central1 \
-    --project=$PROJECT_ID || echo "Scheduler job creation skipped/failed"
-    
-
-echo ""
-echo "========================================="
-echo "Setup is finally Complete!"
-echo "========================================="
-echo "Server IP: $SERVER_IP"
-echo "Database Connection: $DB_CONNECTION_NAME"
-echo ""
-echo "Next steps:"
-echo "1. Wait 2-3 minutes for VMs to finish startup"
-echo "2. Test the server: curl http://$SERVER_IP:8080/0.html"
-echo "3. Check VM status: gcloud compute instances list"
-echo ""
+echo "DONE"
+echo "Server URL: http://${STATIC_IP}:${PORT}/"
+echo "DB connection name: ${DB_CONNECTION_NAME}"
