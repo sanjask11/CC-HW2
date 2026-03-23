@@ -3,3 +3,4 @@ google-cloud-pubsub==2.*
 google-cloud-logging==3.*
 pymysql==1.*
 cryptography==41.*
+SQLAlchemy==2.*
