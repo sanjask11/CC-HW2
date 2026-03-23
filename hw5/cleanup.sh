@@ -90,8 +90,6 @@ gcloud scheduler jobs delete stop-db-hourly \
     --location=us-central1 \
     --project=$PROJECT_ID \
     --quiet 2>/dev/null || echo "Scheduler job doesn't exist"
-```
-
 
 echo ""
 echo "========================================="
