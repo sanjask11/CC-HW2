@@ -21,7 +21,7 @@ apt-get install -y python3-pip git
 
 echo "Installing Python dependencies..."
 pip3 install --upgrade pip
-pip3 install google-cloud-storage google-cloud-pubsub google-cloud-logging pymysql cryptography
+pip3 install --break-system-packages google-cloud-storage google-cloud-pubsub google-cloud-logging pymysql cryptography
 
 
 echo "Cloning GitHub repository..."
