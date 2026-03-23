@@ -160,40 +160,48 @@ gcloud compute firewall-rules create allow-http-8080 \
 echo ""
 echo "Step 11: Creating the VMs..."
 
-
 DB_CONNECTION_NAME=$(gcloud sql instances describe $DB_INSTANCE_NAME \
     --format="get(connectionName)" \
     --project=$PROJECT_ID)
 
-
 echo "Creating the web server VM..."
-gcloud compute instances create hw5-server \
-    --zone=$ZONE \
-    --machine-type=e2-micro \
-    --tags=http-server \
-    --service-account=$SA_SERVER_EMAIL \
-    --scopes=cloud-platform \
-    --address=$SERVER_IP \
-    --metadata=startup-script-url=gs://$BUCKET_NAME/hw5/startup.sh,service-type=server,project-id=$PROJECT_ID,db-connection=$DB_CONNECTION_NAME,db-name=$DB_NAME,db-user=$DB_USER,db-password=$DB_PASSWORD,bucket-name=$BUCKET_NAME \
-    --project=$PROJECT_ID 2>/dev/null || echo "Server VM already exists"
-
+if gcloud compute instances describe hw5-server --zone=$ZONE --project=$PROJECT_ID 2>/dev/null; then
+    echo "Server VM already exists"
+else
+    gcloud compute instances create hw5-server \
+        --zone=$ZONE \
+        --machine-type=e2-small \
+        --tags=http-server \
+        --service-account=$SA_SERVER_EMAIL \
+        --scopes=cloud-platform \
+        --address=$SERVER_IP \
+        --metadata=startup-script-url=gs://$BUCKET_NAME/hw5/startup.sh,service-type=server,project-id=$PROJECT_ID,db-connection=$DB_CONNECTION_NAME,db-name=$DB_NAME,db-user=$DB_USER,db-password=$DB_PASSWORD,bucket-name=$BUCKET_NAME \
+        --project=$PROJECT_ID
+fi
 
 echo "Creating the reporter VM..."
-gcloud compute instances create hw5-reporter \
-    --zone=$ZONE \
-    --machine-type=e2-micro \
-    --service-account=$SA_REPORTER_EMAIL \
-    --scopes=cloud-platform \
-    --metadata=startup-script-url=gs://$BUCKET_NAME/hw5/startup.sh,service-type=reporter,project-id=$PROJECT_ID \
-    --project=$PROJECT_ID 2>/dev/null || echo "Reporter VM already exists"
-
+if gcloud compute instances describe hw5-reporter --zone=$ZONE --project=$PROJECT_ID 2>/dev/null; then
+    echo "Reporter VM already exists"
+else
+    gcloud compute instances create hw5-reporter \
+        --zone=$ZONE \
+        --machine-type=e2-micro \
+        --service-account=$SA_REPORTER_EMAIL \
+        --scopes=cloud-platform \
+        --metadata=startup-script-url=gs://$BUCKET_NAME/hw5/startup.sh,service-type=reporter,project-id=$PROJECT_ID \
+        --project=$PROJECT_ID
+fi
 
 echo "Creating the client VM..."
-gcloud compute instances create hw5-client \
-    --zone=$ZONE \
-    --machine-type=e2-micro \
-    --metadata=startup-script-url=gs://$BUCKET_NAME/hw5/startup.sh,service-type=client,server-ip=$SERVER_IP \
-    --project=$PROJECT_ID 2>/dev/null || echo "Client VM already exists"
+if gcloud compute instances describe hw5-client --zone=$ZONE --project=$PROJECT_ID 2>/dev/null; then
+    echo "Client VM already exists"
+else
+    gcloud compute instances create hw5-client \
+        --zone=$ZONE \
+        --machine-type=e2-micro \
+        --metadata=startup-script-url=gs://$BUCKET_NAME/hw5/startup.sh,service-type=client,server-ip=$SERVER_IP \
+        --project=$PROJECT_ID
+fi
 
 echo ""
 echo "Step 12: Deploying Cloud Function to auto-stop database..."
