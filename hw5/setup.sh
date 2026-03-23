@@ -71,7 +71,7 @@ gcloud sql instances create "${DB_INSTANCE}" \
   --region="${REGION}" \
   --root-password="${DB_PASSWORD}" >/dev/null 2>&1 || true
 
-echo "Ensuring DB is running..."
+echo "Starting database..."
 gcloud sql instances patch "${DB_INSTANCE}" --activation-policy=ALWAYS --quiet >/dev/null
 
 echo "Creating database + DB user..."
@@ -81,6 +81,8 @@ gcloud sql users create "${DB_USER}" --instance="${DB_INSTANCE}" --password="${D
 DB_CONNECTION_NAME="$(gcloud sql instances describe "${DB_INSTANCE}" --format='value(connectionName)')"
 
 echo "Assigning IAM..."
+
+# Server VM permissions
 gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
   --member="serviceAccount:${SERVER_SA_EMAIL}" \
   --role="roles/logging.logWriter" >/dev/null
@@ -97,6 +99,7 @@ gcloud storage buckets add-iam-policy-binding "gs://${BUCKET_NAME}" \
   --member="serviceAccount:${SERVER_SA_EMAIL}" \
   --role="roles/storage.objectViewer" >/dev/null
 
+# Reporter VM permissions
 gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
   --member="serviceAccount:${REPORTER_SA_EMAIL}" \
   --role="roles/logging.logWriter" >/dev/null
