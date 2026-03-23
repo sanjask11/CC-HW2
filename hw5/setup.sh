@@ -62,12 +62,15 @@ gcloud sql users create $DB_USER \
 
 echo ""
 echo "Step 5: Creating the database schema..."
-# Import schema - need to upload to Cloud Storage first
+
 gsutil cp sql/schema.sql gs://$BUCKET_NAME/sql/schema.sql
+echo "Importing schema into database (please wait)..."
 gcloud sql import sql $DB_INSTANCE_NAME \
     gs://$BUCKET_NAME/sql/schema.sql \
     --database=$DB_NAME \
-    --project=$PROJECT_ID 2>/dev/null || echo "Schema may already exist"
+    --project=$PROJECT_ID
+
+echo "Schema import completed!"
 
 echo ""
 echo "Step 6: Creating the service accounts..."
