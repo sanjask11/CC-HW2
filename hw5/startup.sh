@@ -84,7 +84,6 @@ EOF
   mysql -h 127.0.0.1 -P 3306 -u "$DB_USER" -p"$DB_PASSWORD" < "$APPDIR/sql/schema.sql" || true
 fi
 
-PY_ENTRY=""
 if [[ "$APP" == "service1" ]]; then
   PY_ENTRY="$APPDIR/main_service1.py"
 elif [[ "$APP" == "service2" ]]; then
