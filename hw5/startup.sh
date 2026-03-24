@@ -8,7 +8,7 @@ if [[ -f "$LOCK" ]]; then
 fi
 
 apt-get update -y
-apt-get install -y python3 python3-venv python3-pip git ca-certificates curl
+apt-get install -y python3 python3-venv python3-pip git ca-certificates curl default-mysql-client
 
 META="http://metadata.google.internal/computeMetadata/v1/instance/attributes"
 HDR="Metadata-Flavor: Google"
@@ -42,6 +42,7 @@ python3 -m venv "$APPDIR/venv"
 
 cat >/etc/default/hw5-env <<EOF
 PROJECT_ID=$PROJECT_ID
+GOOGLE_CLOUD_PROJECT=$PROJECT_ID
 BUCKET=$BUCKET
 PAGES_PREFIX=$PAGES_PREFIX
 PORT=$PORT
@@ -83,7 +84,6 @@ EOF
   systemctl start cloud-sql-proxy.service
 fi
 
-PY_ENTRY=""
 if [[ "$APP" == "service1" ]]; then
   PY_ENTRY="$APPDIR/service1_main.py"
 elif [[ "$APP" == "service2" ]]; then
