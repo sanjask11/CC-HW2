@@ -135,7 +135,7 @@ def migrate(conn, source, cols, err_table, err_cols):
 
     with conn.cursor() as cur:
         cur.execute("SET SESSION sql_mode = ''")
-        cur.execute("SET SESSION time_zone = '+00:00'")hw6db
+        cur.execute("SET SESSION time_zone = '+00:00'")
 
         cur.execute(f"""
         INSERT INTO ip_locations(client_ip, country)

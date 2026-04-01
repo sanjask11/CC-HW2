@@ -253,7 +253,7 @@ gcloud compute instances delete "${ML_VM}" \
 echo "Creating ML VM..."
 gcloud compute instances create "${ML_VM}" \
   --zone="${ZONE}" \
-  --machine-type="e2-micro" \
+  --machine-type="e2-small" \
   --image-family="debian-12" \
   --image-project="debian-cloud" \
   --service-account="${ML_SA_EMAIL}" \
