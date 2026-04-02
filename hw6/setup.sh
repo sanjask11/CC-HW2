@@ -6,7 +6,7 @@ export CLOUDSDK_CORE_DISABLE_PROMPTS=1
 
 PROJECT_ID="primal-ivy-485619-r6"
 
-ZONE="us-central1-a"
+ZONE="us-central1-b"
 REGION="us-central1"
 REPO_URL="https://github.com/sanjask11/CC-HW2.git"
 
