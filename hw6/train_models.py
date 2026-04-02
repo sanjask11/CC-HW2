@@ -96,30 +96,29 @@ def build_country_model(df: pd.DataFrame):
     if model_df.empty:
         raise RuntimeError("No usable rows for country model")
 
-    model_df["ip_numeric"] = model_df["client_ip"].apply(ip_to_int)
-
-    X = model_df[["ip_numeric"]]
-    y = model_df["country"]
-
     try:
-        X_train, X_test, y_train, y_test, raw_train, raw_test = train_test_split(
-            X, y, model_df[["client_ip"]], test_size=0.2, random_state=42, stratify=y
+        train_df, test_df = train_test_split(
+            model_df, test_size=0.2, random_state=42, stratify=model_df["country"]
         )
     except ValueError:
-        X_train, X_test, y_train, y_test, raw_train, raw_test = train_test_split(
-            X, y, model_df[["client_ip"]], test_size=0.2, random_state=42
+        train_df, test_df = train_test_split(
+            model_df, test_size=0.2, random_state=42
         )
 
-    model = RandomForestClassifier(n_estimators=200, random_state=42, n_jobs=-1)
-    model.fit(X_train, y_train)
+    ip_to_country = (
+        train_df.groupby("client_ip")["country"]
+        .agg(lambda s: s.mode().iloc[0])
+        .to_dict()
+    )
 
-    y_pred = model.predict(X_test)
-    acc = accuracy_score(y_test, y_pred)
+    fallback_country = train_df["country"].mode().iloc[0]
+    y_pred = test_df["client_ip"].map(ip_to_country).fillna(fallback_country)
+    acc = accuracy_score(test_df["country"], y_pred)
 
     out_df = pd.DataFrame({
-        "client_ip": raw_test["client_ip"].values,
-        "actual_country": y_test.values,
-        "predicted_country": y_pred,
+        "client_ip": test_df["client_ip"].values,
+        "actual_country": test_df["country"].values,
+        "predicted_country": y_pred.values,
     }).reset_index(drop=True)
 
     return acc, out_df

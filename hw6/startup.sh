@@ -1,14 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+LOGFILE="/var/log/hw6-startup.log"
+exec > >(tee -a "$LOGFILE") 2>&1
+
+echo "=== HW6 Startup: $(date) ==="
+
 LOCK="/var/log/hw6_startup_done"
 if [[ -f "$LOCK" ]]; then
-  echo "Startup already ran once. Skipping."
+  echo "Startup already ran. Skipping."
   exit 0
 fi
 
 apt-get update -y
-apt-get install -y python3 python3-venv python3-pip git curl ca-certificatesExecStart=$APPDIR/venv/bin/python $APPDIR/train_models.py
+apt-get install -y python3 python3-venv python3-pip git curl ca-certificates
 
 META="http://metadata.google.internal/computeMetadata/v1/instance/attributes"
 HDR="Metadata-Flavor: Google"
@@ -21,93 +26,74 @@ DB_USER="$(curl -sfH "$HDR" "$META/DB_USER")"
 DB_PASSWORD="$(curl -sfH "$HDR" "$META/DB_PASSWORD")"
 INSTANCE_CONNECTION_NAME="$(curl -sfH "$HDR" "$META/INSTANCE_CONNECTION_NAME")"
 
+echo "PROJECT_ID=$PROJECT_ID"
+echo "BUCKET=$BUCKET"
+echo "INSTANCE_CONNECTION_NAME=$INSTANCE_CONNECTION_NAME"
+
 APPDIR="/opt/hw6"
 rm -rf "$APPDIR"
 mkdir -p "$APPDIR"
 cd "$APPDIR"
 
+echo "Cloning repo..."
 git clone --depth=1 "$REPO_URL" repo
 cp -r repo/hw6/* "$APPDIR/"
+echo "Files in APPDIR: $(ls $APPDIR)"
 
+echo "Installing Python packages..."
 python3 -m venv "$APPDIR/venv"
 "$APPDIR/venv/bin/pip" install --upgrade pip
 "$APPDIR/venv/bin/pip" install -r "$APPDIR/requirements.txt"
+echo "Packages installed."
 
-cat >/etc/default/hw6-env <<EOF
-PROJECT_ID=$PROJECT_ID
-GOOGLE_CLOUD_PROJECT=$PROJECT_ID
-BUCKET=$BUCKET
-DB_NAME=$DB_NAME
-DB_USER=$DB_USER
-DB_PASSWORD=$DB_PASSWORD
-INSTANCE_CONNECTION_NAME=$INSTANCE_CONNECTION_NAME
-DB_HOST=127.0.0.1
-DB_PORT=3306
-EOF
-
+echo "Downloading Cloud SQL proxy..."
 curl -o /usr/local/bin/cloud-sql-proxy \
   https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.11.4/cloud-sql-proxy.linux.amd64
 chmod +x /usr/local/bin/cloud-sql-proxy
 
-cat >/etc/systemd/system/cloud-sql-proxy.service <<EOF
-[Unit]
-Description=Cloud SQL Proxy
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-EnvironmentFile=/etc/default/hw6-env
-ExecStart=/usr/local/bin/cloud-sql-proxy \$INSTANCE_CONNECTION_NAME --address 127.0.0.1 --port 3306
-Restart=always
-RestartSec=2
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-cat >/etc/systemd/system/hw6-train.service <<EOF
-[Unit]
-Description=HW6 Model Training
-After=network-online.target cloud-sql-proxy.service
-Wants=network-online.target
-Requires=cloud-sql-proxy.service
-
-[Service]
-Type=oneshot
-EnvironmentFile=/etc/default/hw6-env
-WorkingDirectory=$APPDIR
-ExecStart=$APPDIR/venv/bin/python $APPDIR/train_models.py
-StandardOutput=append:/var/log/hw6-train.log
-StandardError=append:/var/log/hw6-train.log
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-systemctl daemon-reload
-systemctl enable cloud-sql-proxy.service
-systemctl start cloud-sql-proxy.service
+echo "Starting Cloud SQL proxy..."
+nohup /usr/local/bin/cloud-sql-proxy "$INSTANCE_CONNECTION_NAME" \
+  --address 127.0.0.1 --port 3306 >>/var/log/cloud-sql-proxy.log 2>&1 &
+PROXY_PID=$!
+echo "Proxy PID=$PROXY_PID"
 
 echo "Waiting for Cloud SQL proxy to be ready..."
+PROXY_READY="false"
 for i in $(seq 1 30); do
-  if python3 -c "
-import pymysql, os
+  if "$APPDIR/venv/bin/python" -c "
+import pymysql
 pymysql.connect(
     host='127.0.0.1', port=3306,
-    user='${DB_USER}', password='${DB_PASSWORD}',
-    database='${DB_NAME}', connect_timeout=5
+    user='$DB_USER', password='$DB_PASSWORD',
+    database='$DB_NAME', connect_timeout=5
 ).close()
 " 2>/dev/null; then
-    echo "Cloud SQL proxy is ready"
+    PROXY_READY="true"
+    echo "Proxy ready on attempt $i"
     break
   fi
-  echo "  attempt $i/30, retrying in 5s..."
+  echo "  attempt $i/30, waiting 5s..."
   sleep 5
 done
 
-systemctl enable hw6-train.service
-systemctl start hw6-train.service
+if [[ "$PROXY_READY" != "true" ]]; then
+  echo "ERROR: Cloud SQL proxy never became ready"
+  cat /var/log/cloud-sql-proxy.log || true
+  exit 1
+fi
+
+echo "Running train_models.py..."
+export PROJECT_ID="$PROJECT_ID"
+export GOOGLE_CLOUD_PROJECT="$PROJECT_ID"
+export BUCKET="$BUCKET"
+export DB_NAME="$DB_NAME"
+export DB_USER="$DB_USER"
+export DB_PASSWORD="$DB_PASSWORD"
+export INSTANCE_CONNECTION_NAME="$INSTANCE_CONNECTION_NAME"
+export DB_HOST="127.0.0.1"
+export DB_PORT="3306"
+
+"$APPDIR/venv/bin/python" "$APPDIR/train_models.py"
 
 touch "$LOCK"
-echo "Startup complete."
+echo "=== HW6 Startup Done: $(date) ==="

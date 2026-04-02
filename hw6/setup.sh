@@ -280,9 +280,9 @@ for _ in $(seq 1 60); do
 done
 
 if [[ "${FOUND}" != "true" ]]; then
-  echo "Training timed out. Fetching VM logs for debugging..."
+  echo "Training timed out. Fetching VM startup log for debugging..."
   gcloud compute ssh "${ML_VM}" --zone="${ZONE}" --command \
-    "sudo journalctl -u hw6-train --no-pager -n 80; echo '---PROXY LOGS---'; sudo journalctl -u cloud-sql-proxy --no-pager -n 30" \
+    "sudo cat /var/log/hw6-startup.log 2>/dev/null || echo 'no startup log found'" \
     2>/dev/null || echo "(Could not SSH into VM)"
 fi
 
