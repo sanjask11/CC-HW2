@@ -252,11 +252,18 @@ gcloud compute instances delete "${ML_VM}" \
 
 echo "Creating ML VM (trying multiple zones if needed)..."
 VM_CREATED="false"
-for TRY_ZONE in us-central1-a us-central1-b us-central1-c us-central1-f us-east1-b us-east1-c us-east4-b us-west1-b; do
+for TRY_ZONE in us-central1-a us-central1-b us-central1-c us-central1-f \
+                us-east1-b us-east1-c us-east1-d \
+                us-east4-b us-east4-c \
+                us-west1-b us-west1-c \
+                us-west2-a us-west2-b \
+                us-west4-a us-west4-b \
+                europe-west1-b europe-west1-c \
+                asia-east1-a asia-east1-b; do
   echo "  Trying zone: ${TRY_ZONE}..."
   if gcloud compute instances create "${ML_VM}" \
     --zone="${TRY_ZONE}" \
-    --machine-type="e2-small" \
+    --machine-type="e2-medium" \
     --image-family="debian-12" \
     --image-project="debian-cloud" \
     --service-account="${ML_SA_EMAIL}" \
@@ -271,6 +278,7 @@ for TRY_ZONE in us-central1-a us-central1-b us-central1-c us-central1-f us-east1
   fi
   echo "  Zone ${TRY_ZONE} exhausted, trying next..."
 done
+
 
 if [[ "${VM_CREATED}" != "true" ]]; then
   echo "ERROR: Could not create VM in any zone. Try again later."
