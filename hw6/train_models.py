@@ -106,29 +106,30 @@ def build_country_model(df: pd.DataFrame):
     if model_df.empty:
         raise RuntimeError("No usable rows for country model")
 
+    model_df["ip_numeric"] = model_df["client_ip"].apply(ip_to_int)
+
+    X = model_df[["ip_numeric"]]
+    y = model_df["country"]
+
     try:
-        train_df, test_df = train_test_split(
-            model_df, test_size=0.2, random_state=42, stratify=model_df["country"]
+        X_train, X_test, y_train, y_test, raw_train, raw_test = train_test_split(
+            X, y, model_df[["client_ip"]], test_size=0.2, random_state=42, stratify=y
         )
     except ValueError:
-        train_df, test_df = train_test_split(
-            model_df, test_size=0.2, random_state=42
+        X_train, X_test, y_train, y_test, raw_train, raw_test = train_test_split(
+            X, y, model_df[["client_ip"]], test_size=0.2, random_state=42
         )
 
-    ip_to_country = (
-        train_df.groupby("client_ip")["country"]
-        .agg(lambda s: s.mode().iloc[0])
-        .to_dict()
-    )
+    model = RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1)
+    model.fit(X_train, y_train)
 
-    fallback_country = train_df["country"].mode().iloc[0]
-    y_pred = test_df["client_ip"].map(ip_to_country).fillna(fallback_country)
-    acc = accuracy_score(test_df["country"], y_pred)
+    y_pred = model.predict(X_test)
+    acc = accuracy_score(y_test, y_pred)
 
     out_df = pd.DataFrame({
-        "client_ip": test_df["client_ip"].values,
-        "actual_country": test_df["country"].values,
-        "predicted_country": y_pred.values,
+        "client_ip": raw_test["client_ip"].values,
+        "actual_country": y_test.values,
+        "predicted_country": y_pred,
     }).reset_index(drop=True)
 
     return acc, out_df
@@ -141,7 +142,6 @@ def build_income_model(df: pd.DataFrame):
         "storage_read_ms", "response_send_ms", "db_insert_ms", "total_request_ms",
     ]
 
-    # Only use features that actually exist and have data
     available = [f for f in features if f in df.columns and df[f].notna().any()]
     model_df = df[available + ["income"]].dropna(subset=["income"]).copy()
 
@@ -176,7 +176,7 @@ def build_income_model(df: pd.DataFrame):
 
     model = Pipeline(steps=[
         ("preprocessor", ColumnTransformer(transformers=transformers)),
-        ("classifier", RandomForestClassifier(n_estimators=300, random_state=42, n_jobs=-1)),
+        ("classifier", RandomForestClassifier(n_estimators=50, random_state=42, n_jobs=-1)),
     ])
 
     model.fit(X_train, y_train)
@@ -198,6 +198,7 @@ def dataframe_to_text(title: str, accuracy: float, df: pd.DataFrame, max_rows: i
     buf.write(df.head(max_rows).to_string(index=False))
     buf.write("\n")
     return buf.getvalue()
+
 
 def main():
     print("Loading normalized data from Cloud SQL...")
