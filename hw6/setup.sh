@@ -270,7 +270,7 @@ for TRY_ZONE in us-central1-a us-central1-b us-central1-c us-central1-f \
                 us-west4-a us-west4-b \
                 europe-west1-b europe-west1-c \
                 asia-east1-a asia-east1-b; do
-  for TRY_MACHINE in e2-micro e2-small; do
+  for TRY_MACHINE in e2-medium ; do
     echo "Trying zone=${TRY_ZONE}, machine=${TRY_MACHINE}"
     if gcloud compute instances create "${ML_VM}" \
       --zone="${TRY_ZONE}" \

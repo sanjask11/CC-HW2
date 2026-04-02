@@ -143,26 +143,16 @@ def failure_text(title: str, message: str) -> str:
 
 
 def build_country_model(df: pd.DataFrame):
-    """
-    Deterministic rule-based model:
-    client_ip -> country
-
-    This is the correct approach for the normalized HW6 schema because the
-    homework hint explicitly states that a particular IP always comes from the
-    same country.
-    """
     model_df = df[["client_ip", "country"]].dropna().copy()
     if model_df.empty:
         raise RuntimeError("No usable rows for country model")
 
-    # Split rows so we can still report test accuracy cleanly.
     train_df, test_df = train_test_split(
         model_df,
         test_size=0.2,
         random_state=42,
     )
 
-    # Use the full normalized IP lookup table.
     ip_country = load_ip_country_lookup()
     if not ip_country:
         raise RuntimeError("ip_locations table is empty; cannot build country lookup")
@@ -188,14 +178,6 @@ def build_country_model(df: pd.DataFrame):
 
 
 def build_income_model(df: pd.DataFrame):
-    """
-    Hybrid model:
-    1. Exact lookup from training split: client_ip -> most common income
-    2. Fallback ML model for unseen IPs
-
-    This is much more robust than only using a random forest, and it handles
-    repeated IPs/profile patterns in the log data well.
-    """
     base_cols = [
         "client_ip",
         "country",
@@ -220,7 +202,6 @@ def build_income_model(df: pd.DataFrame):
     if model_df.empty:
         raise RuntimeError("No usable rows for income model")
 
-    # Normalize some fields
     model_df["client_ip"] = model_df["client_ip"].astype(str)
     model_df["income"] = model_df["income"].astype(str)
 
@@ -230,7 +211,6 @@ def build_income_model(df: pd.DataFrame):
     if "age" in model_df.columns:
         model_df["age"] = pd.to_numeric(model_df["age"], errors="coerce")
 
-    # Avoid impossible stratify cases when tiny classes exist
     income_counts = model_df["income"].value_counts()
     can_stratify = income_counts.min() >= 2 if not income_counts.empty else False
 
@@ -248,7 +228,6 @@ def build_income_model(df: pd.DataFrame):
             random_state=42,
         )
 
-    # Step 1: exact IP lookup from training data
     ip_income_lookup = (
         train_df.groupby("client_ip")["income"]
         .agg(lambda s: s.mode().iloc[0])
@@ -261,7 +240,6 @@ def build_income_model(df: pd.DataFrame):
     predictions = pd.Series(index=test_df.index, dtype=object)
     predictions.loc[seen_mask] = test_df.loc[seen_mask, "client_ip"].map(ip_income_lookup)
 
-    # Step 2: fallback ML only for unseen IPs
     if len(unseen_test) > 0:
         feature_cols = [
             "client_ip",
@@ -284,13 +262,11 @@ def build_income_model(df: pd.DataFrame):
         rf_test = unseen_test[feature_cols].copy()
         y_train = train_df["income"].copy()
 
-        # Add numeric IP form for ML
         rf_train["ip_numeric"] = rf_train["client_ip"].apply(ip_to_int)
         rf_test["ip_numeric"] = rf_test["client_ip"].apply(ip_to_int)
 
-        # Keep client_ip as categorical too
         categorical_features = [
-            "client_ip", "country", "gender", "time_of_day", "requested_file", "method"
+            "country", "gender", "time_of_day", "requested_file", "method"
         ]
         numeric_features = [
             "age", "is_banned", "status_code", "header_extract_ms", "storage_read_ms",
@@ -325,7 +301,7 @@ def build_income_model(df: pd.DataFrame):
         model = Pipeline(steps=[
             ("preprocessor", ColumnTransformer(transformers=transformers)),
             ("classifier", RandomForestClassifier(
-                n_estimators=200,
+                n_estimators=100,
                 random_state=42,
                 n_jobs=-1,
             )),
@@ -335,7 +311,6 @@ def build_income_model(df: pd.DataFrame):
         unseen_pred = model.predict(rf_test)
         predictions.loc[unseen_test.index] = unseen_pred
 
-    # Final fallback, just in case
     fallback_income = train_df["income"].mode().iloc[0]
     predictions = predictions.fillna(fallback_income)
 
@@ -362,7 +337,6 @@ def main():
     print("Columns:", list(df.columns), flush=True)
     print("Non-null income rows:", int(df["income"].notna().sum()) if "income" in df.columns else 0, flush=True)
 
-    # COUNTRY
     print("Training country model...", flush=True)
     try:
         country_acc, country_out = build_country_model(df)
@@ -379,7 +353,6 @@ def main():
         upload_text_to_gcs(failure_text("Country Prediction Results", msg), COUNTRY_OUTPUT)
         raise
 
-    # INCOME
     print("Training income model...", flush=True)
     try:
         income_acc, income_out = build_income_model(df)
