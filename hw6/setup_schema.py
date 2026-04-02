@@ -50,23 +50,27 @@ def get_columns(conn, table):
     return [r["Field"] for r in rows]
 
 
+OUR_TABLES = {"ip_locations", "user_profiles", "requests_log_3nf", "error_requests_3nf"}
+
+
 def find_source_table(conn):
     for t in list_tables(conn):
+        if t in OUR_TABLES:
+            continue
         cols = set(get_columns(conn, t))
         if "client_ip" in cols and "country" in cols:
             return t, cols
-    raise RuntimeError("Cannot locate raw request table")
+    raise RuntimeError("Cannot locate raw request table (needs client_ip + country)")
 
 
 def find_error_table(conn, source):
     for t in list_tables(conn):
-        if t == source:
+        if t == source or t in OUR_TABLES:
             continue
         cols = set(get_columns(conn, t))
         if "requested_file" in cols and ("error_code" in cols or "status_code" in cols):
             return t, cols
     return None, set()
-
 
 def ensure_tables(conn):
     with conn.cursor() as cur:
@@ -204,26 +208,23 @@ def migrate(conn, source, cols, err_table, err_cols):
 
 
 def main():
-
     wait_for_db()
-
     conn = get_connection()
-
     try:
-
         source, cols = find_source_table(conn)
+        print(f"Source table: {source}")
+        print(f"Columns found: {sorted(cols)}")
+
         err_table, err_cols = find_error_table(conn, source)
+        if err_table:
+            print(f"Error table: {err_table}")
 
         ensure_tables(conn)
         clear_tables(conn)
-
         migrate(conn, source, cols, err_table, err_cols)
-
         print("3NF schema setup complete")
-
     finally:
         conn.close()
-
 
 if __name__ == "__main__":
     sys.exit(main())
