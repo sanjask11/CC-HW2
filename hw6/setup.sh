@@ -6,7 +6,7 @@ export CLOUDSDK_CORE_DISABLE_PROMPTS=1
 
 PROJECT_ID="primal-ivy-485619-r6"
 
-ZONE="us-central1-b"
+ZONE="us-central1-a"
 REGION="us-central1"
 REPO_URL="https://github.com/sanjask11/CC-HW2.git"
 
@@ -250,19 +250,34 @@ gcloud compute instances delete "${ML_VM}" \
   --zone="${ZONE}" \
   --quiet >/dev/null 2>&1 || true
 
-echo "Creating ML VM..."
-gcloud compute instances create "${ML_VM}" \
-  --zone="${ZONE}" \
-  --machine-type="e2-small" \
-  --image-family="debian-12" \
-  --image-project="debian-cloud" \
-  --service-account="${ML_SA_EMAIL}" \
-  --scopes="https://www.googleapis.com/auth/cloud-platform" \
-  --metadata="PROJECT_ID=${PROJECT_ID},REPO_URL=${REPO_URL},BUCKET=${BUCKET_NAME},DB_NAME=${DB_NAME},DB_USER=${DB_USER},DB_PASSWORD=${DB_PASSWORD},INSTANCE_CONNECTION_NAME=${INSTANCE_CONNECTION_NAME}" \
-  --metadata-from-file startup-script="startup.sh" \
-  >/dev/null
+echo "Creating ML VM (trying multiple zones if needed)..."
+VM_CREATED="false"
+for TRY_ZONE in us-central1-a us-central1-b us-central1-c us-central1-f us-east1-b us-east1-c us-east4-b us-west1-b; do
+  echo "  Trying zone: ${TRY_ZONE}..."
+  if gcloud compute instances create "${ML_VM}" \
+    --zone="${TRY_ZONE}" \
+    --machine-type="e2-small" \
+    --image-family="debian-12" \
+    --image-project="debian-cloud" \
+    --service-account="${ML_SA_EMAIL}" \
+    --scopes="https://www.googleapis.com/auth/cloud-platform" \
+    --metadata="PROJECT_ID=${PROJECT_ID},REPO_URL=${REPO_URL},BUCKET=${BUCKET_NAME},DB_NAME=${DB_NAME},DB_USER=${DB_USER},DB_PASSWORD=${DB_PASSWORD},INSTANCE_CONNECTION_NAME=${INSTANCE_CONNECTION_NAME}" \
+    --metadata-from-file startup-script="startup.sh" \
+    >/dev/null 2>&1; then
+    ZONE="${TRY_ZONE}"
+    VM_CREATED="true"
+    echo "  VM created in zone: ${ZONE}"
+    break
+  fi
+  echo "  Zone ${TRY_ZONE} exhausted, trying next..."
+done
 
-echo "ML VM created: ${ML_VM}"
+if [[ "${VM_CREATED}" != "true" ]]; then
+  echo "ERROR: Could not create VM in any zone. Try again later."
+  exit 1
+fi
+
+echo "ML VM created: ${ML_VM} in zone: ${ZONE}"
 echo ""
 echo "Waiting for training to complete (polls GCS every 30s, up to 30 min)..."
 
@@ -294,12 +309,12 @@ echo "===== Income Prediction Results ====="
 gcloud storage cat "gs://${BUCKET_NAME}/${INCOME_BLOB}" || echo "(file not found)"
 
 echo ""
-echo "Deleting ML VM..."
+echo "Deleting ML VM (as required by assignment)..."
 gcloud compute instances delete "${ML_VM}" \
   --zone="${ZONE}" \
   --quiet >/dev/null 2>&1 || true
 
-echo "Stopping Cloud SQL instance..."
+echo "Stopping Cloud SQL instance (as required by assignment)..."
 gcloud sql instances patch "${DB_INSTANCE}" \
   --activation-policy=NEVER \
   --quiet >/dev/null
