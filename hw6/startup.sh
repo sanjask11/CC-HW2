@@ -14,6 +14,19 @@ fi
 
 apt-get update -y
 apt-get install -y python3 python3-venv python3-pip git curl ca-certificates
+apt-get install -y apt-transport-https gnupg
+
+if ! command -v gcloud >/dev/null 2>&1; then
+  echo "Installing Google Cloud CLI..."
+  echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" \
+    | tee /etc/apt/sources.list.d/google-cloud-sdk.list
+  curl https://packages.cloud.google.com/apt/doc/apt-key.gpg \
+    | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
+  apt-get update -y
+  apt-get install -y google-cloud-cli
+fi
+
+gcloud version
 
 META="http://metadata.google.internal/computeMetadata/v1/instance/attributes"
 HDR="Metadata-Flavor: Google"
@@ -38,6 +51,8 @@ cd "$APPDIR"
 echo "Cloning repo..."
 git clone --depth=1 "$REPO_URL" repo
 cp -r repo/hw6/* "$APPDIR/"
+test -f "$APPDIR/train_models.py" || { echo "train_models.py missing"; exit 1; }
+test -f "$APPDIR/requirements.txt" || { echo "requirements.txt missing"; exit 1; }
 echo "Files in APPDIR: $(ls $APPDIR)"
 
 echo "Installing Python packages..."
@@ -47,7 +62,7 @@ python3 -m venv "$APPDIR/venv"
 echo "Packages installed."
 
 echo "Downloading Cloud SQL proxy..."
-curl -o /usr/local/bin/cloud-sql-proxy \
+curl -L -o /usr/local/bin/cloud-sql-proxy \
   https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.11.4/cloud-sql-proxy.linux.amd64
 chmod +x /usr/local/bin/cloud-sql-proxy
 
@@ -72,7 +87,7 @@ pymysql.connect(
     echo "Proxy ready on attempt $i"
     break
   fi
-  echo "  attempt $i/30, waiting 5s..."
+  echo "attempt $i/30, waiting 5s..."
   sleep 5
 done
 
@@ -81,6 +96,8 @@ if [[ "$PROXY_READY" != "true" ]]; then
   cat /var/log/cloud-sql-proxy.log || true
   exit 1
 fi
+
+command -v gcloud >/dev/null 2>&1 || { echo "gcloud not installed"; exit 1; }
 
 echo "Running train_models.py..."
 export PROJECT_ID="$PROJECT_ID"

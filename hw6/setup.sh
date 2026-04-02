@@ -246,12 +246,22 @@ DB_PASSWORD="${DB_PASSWORD}" \
 "${TMP_VENV}/bin/python" setup_schema.py
 
 echo "Deleting existing ML VM if present..."
-gcloud compute instances delete "${ML_VM}" \
-  --zone="${ZONE}" \
-  --quiet >/dev/null 2>&1 || true
+for OLD_ZONE in us-central1-a us-central1-b us-central1-c us-central1-f \
+                us-east1-b us-east1-c us-east1-d \
+                us-east4-b us-east4-c \
+                us-west1-b us-west1-c \
+                us-west2-a us-west2-b \
+                us-west4-a us-west4-b \
+                europe-west1-b europe-west1-c \
+                asia-east1-a asia-east1-b; do
+  gcloud compute instances delete "${ML_VM}" \
+    --zone="${OLD_ZONE}" \
+    --quiet >/dev/null 2>&1 || true
+done
 
-echo "Creating ML VM (trying multiple zones if needed)..."
+echo "Creating ML VM (trying multiple zones and machine types)..."
 VM_CREATED="false"
+
 for TRY_ZONE in us-central1-a us-central1-b us-central1-c us-central1-f \
                 us-east1-b us-east1-c us-east1-d \
                 us-east4-b us-east4-c \
@@ -260,28 +270,29 @@ for TRY_ZONE in us-central1-a us-central1-b us-central1-c us-central1-f \
                 us-west4-a us-west4-b \
                 europe-west1-b europe-west1-c \
                 asia-east1-a asia-east1-b; do
-  echo "  Trying zone: ${TRY_ZONE}..."
-  if gcloud compute instances create "${ML_VM}" \
-    --zone="${TRY_ZONE}" \
-    --machine-type="e2-micro" \
-    --image-family="debian-12" \
-    --image-project="debian-cloud" \
-    --service-account="${ML_SA_EMAIL}" \
-    --scopes="https://www.googleapis.com/auth/cloud-platform" \
-    --metadata="PROJECT_ID=${PROJECT_ID},REPO_URL=${REPO_URL},BUCKET=${BUCKET_NAME},DB_NAME=${DB_NAME},DB_USER=${DB_USER},DB_PASSWORD=${DB_PASSWORD},INSTANCE_CONNECTION_NAME=${INSTANCE_CONNECTION_NAME}" \
-    --metadata-from-file startup-script="startup.sh" \
-    >/dev/null 2>&1; then
-    ZONE="${TRY_ZONE}"
-    VM_CREATED="true"
-    echo "  VM created in zone: ${ZONE}"
-    break
-  fi
-  echo "  Zone ${TRY_ZONE} exhausted, trying next..."
+  for TRY_MACHINE in e2-micro e2-small; do
+    echo "Trying zone=${TRY_ZONE}, machine=${TRY_MACHINE}"
+    if gcloud compute instances create "${ML_VM}" \
+      --zone="${TRY_ZONE}" \
+      --machine-type="${TRY_MACHINE}" \
+      --image-family="debian-12" \
+      --image-project="debian-cloud" \
+      --service-account="${ML_SA_EMAIL}" \
+      --scopes="https://www.googleapis.com/auth/cloud-platform" \
+      --metadata="PROJECT_ID=${PROJECT_ID},REPO_URL=${REPO_URL},BUCKET=${BUCKET_NAME},DB_NAME=${DB_NAME},DB_USER=${DB_USER},DB_PASSWORD=${DB_PASSWORD},INSTANCE_CONNECTION_NAME=${INSTANCE_CONNECTION_NAME}" \
+      --metadata-from-file startup-script="startup.sh"; then
+      ZONE="${TRY_ZONE}"
+      MACHINE_TYPE="${TRY_MACHINE}"
+      VM_CREATED="true"
+      echo "VM created in zone=${ZONE} machine=${MACHINE_TYPE}"
+      break 2
+    fi
+    echo "Failed in zone=${TRY_ZONE}, machine=${TRY_MACHINE}"
+  done
 done
 
-
 if [[ "${VM_CREATED}" != "true" ]]; then
-  echo "ERROR: Could not create VM in any zone. Try again later."
+  echo "ERROR: Could not create VM in any tested zone/machine type."
   exit 1
 fi
 
