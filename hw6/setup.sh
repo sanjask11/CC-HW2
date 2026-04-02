@@ -262,20 +262,29 @@ gcloud compute instances create "${ML_VM}" \
   --metadata-from-file startup-script="startup.sh" \
   >/dev/null
 
-echo "DONE"
-echo "ML VM: ${ML_VM}"
-
+echo "ML VM created: ${ML_VM}"
+echo ""
 echo "Waiting for training to complete (polls GCS every 30s, up to 30 min)..."
+
 COUNTRY_BLOB="hw6/country_predictions.txt"
 INCOME_BLOB="hw6/income_predictions.txt"
+FOUND="false"
 
 for _ in $(seq 1 60); do
   if gcloud storage cat "gs://${BUCKET_NAME}/${COUNTRY_BLOB}" >/dev/null 2>&1 && \
      gcloud storage cat "gs://${BUCKET_NAME}/${INCOME_BLOB}" >/dev/null 2>&1; then
+    FOUND="true"
     break
   fi
   sleep 30
 done
+
+if [[ "${FOUND}" != "true" ]]; then
+  echo "Training timed out. Fetching VM logs for debugging..."
+  gcloud compute ssh "${ML_VM}" --zone="${ZONE}" --command \
+    "sudo journalctl -u hw6-train --no-pager -n 80; echo '---PROXY LOGS---'; sudo journalctl -u cloud-sql-proxy --no-pager -n 30" \
+    2>/dev/null || echo "(Could not SSH into VM)"
+fi
 
 echo "===== Country Prediction Results ====="
 gcloud storage cat "gs://${BUCKET_NAME}/${COUNTRY_BLOB}" || echo "(file not found)"
@@ -286,7 +295,13 @@ gcloud storage cat "gs://${BUCKET_NAME}/${INCOME_BLOB}" || echo "(file not found
 
 echo ""
 echo "Deleting ML VM..."
-gcloud compute instances delete "${ML_VM}" --zone="${ZONE}" --quiet >/dev/null 2>&1 || true
+gcloud compute instances delete "${ML_VM}" \
+  --zone="${ZONE}" \
+  --quiet >/dev/null 2>&1 || true
 
 echo "Stopping Cloud SQL instance..."
-gcloud sql instances patch "${DB_INSTANCE}" --activation-policy=NEVER --quiet >/dev/null
+gcloud sql instances patch "${DB_INSTANCE}" \
+  --activation-policy=NEVER \
+  --quiet >/dev/null
+
+echo "DONE"

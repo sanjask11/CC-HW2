@@ -89,7 +89,22 @@ systemctl daemon-reload
 systemctl enable cloud-sql-proxy.service
 systemctl start cloud-sql-proxy.service
 
-sleep 8
+echo "Waiting for Cloud SQL proxy to be ready..."
+for i in $(seq 1 30); do
+  if python3 -c "
+import pymysql, os
+pymysql.connect(
+    host='127.0.0.1', port=3306,
+    user='${DB_USER}', password='${DB_PASSWORD}',
+    database='${DB_NAME}', connect_timeout=5
+).close()
+" 2>/dev/null; then
+    echo "Cloud SQL proxy is ready"
+    break
+  fi
+  echo "  attempt $i/30, retrying in 5s..."
+  sleep 5
+done
 
 systemctl enable hw6-train.service
 systemctl start hw6-train.service
