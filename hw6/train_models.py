@@ -3,10 +3,12 @@ import ipaddress
 import os
 import sys
 from io import StringIO
+import subprocess
+import tempfile
 
 import pandas as pd
 import pymysql
-from google.cloud import storage
+
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.impute import SimpleImputer
@@ -84,10 +86,18 @@ def upload_text_to_gcs(local_text: str, blob_name: str) -> None:
     if not BUCKET_NAME:
         raise RuntimeError("BUCKET environment variable is missing")
 
-    client = storage.Client(project=PROJECT_ID or None)
-    bucket = client.bucket(BUCKET_NAME)
-    blob = bucket.blob(blob_name)
-    blob.upload_from_string(local_text, content_type="text/plain")
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+        f.write(local_text)
+        tmp_path = f.name
+
+    try:
+        subprocess.run(
+            ['gcloud', 'storage', 'cp', tmp_path, f'gs://{BUCKET_NAME}/{blob_name}'],
+            check=True
+        )
+        print(f"Uploaded to gs://{BUCKET_NAME}/{blob_name}")
+    finally:
+        os.unlink(tmp_path)
 
 
 def build_country_model(df: pd.DataFrame):
