@@ -263,7 +263,7 @@ for TRY_ZONE in us-central1-a us-central1-b us-central1-c us-central1-f \
   echo "  Trying zone: ${TRY_ZONE}..."
   if gcloud compute instances create "${ML_VM}" \
     --zone="${TRY_ZONE}" \
-    --machine-type="e2-medium" \
+    --machine-type="e2-small" \
     --image-family="debian-12" \
     --image-project="debian-cloud" \
     --service-account="${ML_SA_EMAIL}" \
