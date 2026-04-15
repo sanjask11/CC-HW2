@@ -7,6 +7,11 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
 from urllib.parse import unquote, urlparse
 
+# Force metadata access through the link-local metadata IP and bypass proxying.
+os.environ.setdefault("GCE_METADATA_HOST", "169.254.169.254")
+os.environ.setdefault("NO_PROXY", "169.254.169.254,metadata.google.internal")
+os.environ.setdefault("no_proxy", "169.254.169.254,metadata.google.internal")
+
 from google.cloud import logging as cloud_logging
 from google.cloud import storage
 
@@ -26,8 +31,6 @@ storage_client = storage.Client()
 
 
 def blob_name_for_path(path: str) -> str:
-    if path in ("", "/"):
-        path = "index.html"
     path = path.lstrip("/")
     return f"{PAGES_PREFIX}/{path}" if PAGES_PREFIX else path
 
@@ -58,10 +61,12 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         raw_path = unquote(parsed.path)
 
-        # Health check endpoint for LB
         if raw_path == "/healthz":
             self.send_with_headers(200, b"ok\n", "text/plain; charset=utf-8")
             return
+
+        if raw_path in ("", "/"):
+            raw_path = "/0.html"
 
         if ".." in raw_path or not SAFE_PATH_RE.match(raw_path.lstrip("/")):
             self.warn(
@@ -138,6 +143,9 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
+    if not BUCKET:
+        log.warning("BUCKET env var is empty", extra={"json_fields": {"zone": ZONE_NAME}})
+
     server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     log.info("Listening", extra={"json_fields": {"port": PORT, "zone": ZONE_NAME}})
     server.serve_forever()
