@@ -7,11 +7,8 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
 from urllib.parse import unquote, urlparse
 
-# Force metadata access through the link-local metadata IP and bypass proxying.
-os.environ.setdefault("GCE_METADATA_HOST", "169.254.169.254")
-os.environ.setdefault("NO_PROXY", "169.254.169.254,metadata.google.internal")
-os.environ.setdefault("no_proxy", "169.254.169.254,metadata.google.internal")
-
+from google.auth import compute_engine
+from google.auth.transport.requests import Request
 from google.cloud import logging as cloud_logging
 from google.cloud import storage
 
@@ -27,7 +24,34 @@ cloud_logging.Client().setup_logging()
 log = logging.getLogger("hw8.service1")
 log.setLevel(logging.INFO)
 
-storage_client = storage.Client()
+
+def get_storage_client():
+    old_host = os.environ.get("GCE_METADATA_HOST")
+    old_no_proxy = os.environ.get("NO_PROXY")
+    old_no_proxy_lower = os.environ.get("no_proxy")
+    try:
+        os.environ["GCE_METADATA_HOST"] = "169.254.169.254"
+        os.environ["NO_PROXY"] = "169.254.169.254,metadata.google.internal"
+        os.environ["no_proxy"] = "169.254.169.254,metadata.google.internal"
+
+        creds = compute_engine.Credentials()
+        creds.refresh(Request())
+        return storage.Client(project=PROJECT_ID or None, credentials=creds)
+    finally:
+        if old_host is None:
+            os.environ.pop("GCE_METADATA_HOST", None)
+        else:
+            os.environ["GCE_METADATA_HOST"] = old_host
+
+        if old_no_proxy is None:
+            os.environ.pop("NO_PROXY", None)
+        else:
+            os.environ["NO_PROXY"] = old_no_proxy
+
+        if old_no_proxy_lower is None:
+            os.environ.pop("no_proxy", None)
+        else:
+            os.environ["no_proxy"] = old_no_proxy_lower
 
 
 def blob_name_for_path(path: str) -> str:
@@ -81,10 +105,11 @@ class Handler(BaseHTTPRequestHandler):
         blob_name = blob_name_for_path(raw_path)
 
         try:
+            storage_client = get_storage_client()
             bucket = storage_client.bucket(BUCKET)
             blob = bucket.blob(blob_name)
 
-            if not blob.exists():
+            if not blob.exists(timeout=10):
                 self.warn(
                     "File not found",
                     bucket=BUCKET,
@@ -97,7 +122,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_with_headers(404, b"not found\n", "text/plain; charset=utf-8")
                 return
 
-            data = blob.download_as_bytes()
+            data = blob.download_as_bytes(timeout=10)
             ctype, _ = mimetypes.guess_type(blob_name)
             if not ctype:
                 ctype = "application/octet-stream"
@@ -143,9 +168,6 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    if not BUCKET:
-        log.warning("BUCKET env var is empty", extra={"json_fields": {"zone": ZONE_NAME}})
-
     server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     log.info("Listening", extra={"json_fields": {"port": PORT, "zone": ZONE_NAME}})
     server.serve_forever()
