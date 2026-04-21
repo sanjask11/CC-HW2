@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hw9-config
+  namespace: default
+data:
+  project-id: "PROJECT_ID"
+  bucket-name: "san-hw2-cc"
+  pages-prefix: "html-pages"
+  topic-name: "forbidden-requests"
