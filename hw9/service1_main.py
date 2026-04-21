@@ -129,6 +129,8 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 log.exception("Failed to publish forbidden request")
 
+            self.send_with_headers(403, b"forbidden\n")
+            return
         blob_name = blob_name_for_path(raw_path)
 
         try:
