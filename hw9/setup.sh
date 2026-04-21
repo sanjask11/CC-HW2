@@ -68,14 +68,13 @@ if gcloud container clusters describe "${CLUSTER_NAME}" \
   log "Cluster already exists"
 else
   gcloud container clusters create "${CLUSTER_NAME}" \
-    --zone="${ZONE}" \
-    --num-nodes="2" \
-    --machine-type="e2-standard-4" \
-    --enable-stackdriver-kubernetes \
-    --enable-ip-alias \
-    --logging=SYSTEM_COMPONENTS,WORKLOADS \
-    --monitoring=SYSTEM_COMPONENTS,WORKLOADS \
-    --project="${PROJECT_ID}" >/dev/null
+  --zone="${ZONE}" \
+  --num-nodes="2" \
+  --machine-type="e2-standard-4" \
+  --enable-ip-alias \
+  --logging=SYSTEM \
+  --monitoring=SYSTEM \
+  --project="${PROJECT_ID}" >/dev/null
 fi
 
 log_step "Configuring kubectl"
