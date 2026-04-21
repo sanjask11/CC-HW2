@@ -15,8 +15,7 @@ BUCKET_NAME="san-hw2-cc"
 TOPIC="forbidden-requests"
 SUBSCRIPTION="forbidden-requests-sub"
 
-DOCKER_REGISTRY="gcr.io"
-IMAGE_NAME_SERVICE1="${DOCKER_REGISTRY}/${PROJECT_ID}/hw9-service1"
+IMAGE_NAME_SERVICE1="gcr.io/${PROJECT_ID}/hw9-service1"
 IMAGE_TAG="latest"
 
 REPORTER_VM="hw9-reporter-vm"
@@ -68,13 +67,13 @@ if gcloud container clusters describe "${CLUSTER_NAME}" \
   log "Cluster already exists"
 else
   gcloud container clusters create "${CLUSTER_NAME}" \
-  --zone="${ZONE}" \
-  --num-nodes="2" \
-  --machine-type="e2-standard-4" \
-  --enable-ip-alias \
-  --logging=SYSTEM \
-  --monitoring=SYSTEM \
-  --project="${PROJECT_ID}" >/dev/null
+    --zone="${ZONE}" \
+    --num-nodes="2" \
+    --machine-type="e2-standard-4" \
+    --enable-ip-alias \
+    --logging=SYSTEM \
+    --monitoring=SYSTEM \
+    --project="${PROJECT_ID}" >/dev/null
 fi
 
 log_step "Configuring kubectl"
@@ -101,10 +100,10 @@ gcloud storage buckets add-iam-policy-binding "gs://${BUCKET_NAME}" \
   --role="roles/storage.objectViewer" \
   --quiet >/dev/null
 
-log_step "Building and pushing Docker image for service1"
-gcloud auth configure-docker "${DOCKER_REGISTRY}" --quiet >/dev/null
-docker build -t "${IMAGE_NAME_SERVICE1}:${IMAGE_TAG}" "${SCRIPT_DIR}"
-docker push "${IMAGE_NAME_SERVICE1}:${IMAGE_TAG}"
+log_step "Building and pushing Docker image for service1 with Cloud Build"
+gcloud builds submit "${SCRIPT_DIR}" \
+  --tag "${IMAGE_NAME_SERVICE1}:${IMAGE_TAG}" \
+  --project="${PROJECT_ID}"
 
 log_step "Rendering Kubernetes manifests"
 TEMP_DIR="$(mktemp -d)"
@@ -152,10 +151,14 @@ gcloud compute instances create "${REPORTER_VM}" \
   >/dev/null 2>&1 || true
 
 log_step "Deployment complete"
+
 EXTERNAL_IP="$(kubectl get svc hw9-service1 -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)"
+REPORTER_POD_STATUS="$(kubectl get pods -l app=hw9-service1 --no-headers 2>/dev/null || true)"
 
 log "Service1 external IP: ${EXTERNAL_IP:-pending}"
-log "Run:"
+log "Service1 pods:"
+log "${REPORTER_POD_STATUS:-pending}"
+log "Useful commands:"
 log "  kubectl get pods"
 log "  kubectl get svc"
 log "  kubectl logs deployment/hw9-service1"
